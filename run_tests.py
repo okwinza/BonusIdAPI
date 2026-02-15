@@ -88,9 +88,10 @@ class Test:
         for data in GameTestData.from_file("test_data/single_bonus_id.txt"):
             default_item_level = algorithm.process_item(data.get_link(0))
             for bonus_id in range(MAX_BONUS_ID + 1):
-                if bonus_id in (3524,):
-                    # These bonus IDs don't do what the DBC says for some test items
-                    continue
+                # There's a bug in the DBC where 3524 has a "No Bonus" bonus but in reality is a "Scaling Config"
+                # bonus which acts the same as 7753.
+                if bonus_id == 3524:
+                    bonus_id = 7753
                 item_level = algorithm.process_item(data.get_link(bonus_id))
                 expected = data.get_value(bonus_id, default_item_level)
                 if item_level != expected:
@@ -100,9 +101,6 @@ class Test:
         for data in GameTestData.from_file("test_data/content_tuning_id.txt"):
             default_item_level = algorithm.process_item(data.get_link(0))
             for content_tuning_id in range(MAX_CONTENT_TUNING_ID + 1):
-                if content_tuning_id in (2674, 3019):
-                    # Don't understand these yet
-                    continue
                 item_level = algorithm.process_item(data.get_link(content_tuning_id))
                 expected = data.get_value(content_tuning_id, default_item_level)
                 if item_level != expected:

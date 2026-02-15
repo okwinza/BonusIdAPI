@@ -202,7 +202,16 @@ class DirectDBCAlgorithm:
             player_level = self._apply_content_tuning(player_level, item.modifier_content_tuning_id)
         return player_level
 
+    def _resolve_content_tuning_id(self, content_tuning_id: int, bonus_type: Optional[ItemBonusType] = None) -> int:
+        for redirect in self._dbc.conditional_content_tuning.get(content_tuning_id):
+            if redirect.RedirectEnum == 7:
+                return redirect.RedirectContentTuningID
+            if redirect.RedirectEnum == 14 and bonus_type in (ItemBonusType.SCALING_CONFIG, ItemBonusType.SCALING_CONFIG_2):
+                return redirect.RedirectContentTuningID
+        return content_tuning_id
+
     def _apply_content_tuning(self, drop_level: int, content_tuning_id: int, bonus_type: Optional[ItemBonusType] = None) -> int:
+        content_tuning_id = self._resolve_content_tuning_id(content_tuning_id, bonus_type)
         if not self._dbc.content_tuning.has(content_tuning_id):
             return drop_level
         content_tuning = self._dbc.content_tuning.get(content_tuning_id)

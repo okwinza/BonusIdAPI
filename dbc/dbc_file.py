@@ -62,14 +62,22 @@ class DBCFile(Generic[_EntryType], ABC):
         cache_dir_path = os.path.join('.cache', build)
         os.makedirs(cache_dir_path, exist_ok=True)
         pickle_path = os.path.join(cache_dir_path, f'{table_name}.pkl')
+        csv_path = os.path.join(cache_dir_path, f'{table_name}.csv')
         if os.path.exists(pickle_path):
             with open(pickle_path, 'rb') as f:
                 self._entries = pickle.load(f)
         else:
-            logging.info("Downloading DBC data (table_name=%s, build=%s)", table_name, build)
-            res = requests.get(f"https://wago.tools/db2/{table_name}/csv?build={build}")
-            assert res.status_code == 200
-            data = res.content.decode('utf-8')
+            if os.path.exists(csv_path):
+                logging.info("Building from cached CSV (table_name=%s, build=%s)", table_name, build)
+                with open(csv_path, 'r', encoding='utf-8') as f:
+                    data = f.read()
+            else:
+                logging.info("Downloading DBC data (table_name=%s, build=%s)", table_name, build)
+                res = requests.get(f"https://wago.tools/db2/{table_name}/csv?build={build}")
+                assert res.status_code == 200
+                data = res.content.decode('utf-8')
+                with open(csv_path, 'w', encoding='utf-8') as f:
+                    f.write(data)
             entries = [self.EntryType(r) for r in DictReader(data.splitlines(), delimiter=',')]
             self._entries = self._build_entries(entries)
             with open(pickle_path, 'wb') as f:
@@ -244,10 +252,20 @@ class ItemSparse(DBCTypeOneToOne):
     ItemSquishEraID: int
     ItemLevel: int
 
+class ConditionalContentTuning(DBCTypeOneToMany):
+    OrderIndex: int
+    RedirectContentTuningID: int
+    RedirectFlag: int
+    RedirectEnum: int
+    ParentContentTuningID: DBCTypeOneToMany.Index
+
 class ItemSquishEra(DBCTypeOneToOne):
     Patch: int
     CurveID: int
     Flags: int
+
+class ConditionalContentTuningDBC(DBCFileOneToMany[ConditionalContentTuning]):
+    EntryType = ConditionalContentTuning
 
 class ContentTuningDBC(DBCFileOneToOne[ContentTuning]):
     EntryType = ContentTuning
@@ -292,6 +310,7 @@ class ItemSquishEraDBC(DBCFileOneToOne[ItemSquishEra]):
 class DBC:
     def __init__(self, build: str):
         self._build = build
+        self._conditional_content_tuning = None
         self._content_tuning = None
         self._curve = None
         self._curve_point = None
@@ -300,6 +319,12 @@ class DBC:
         self._item_scaling_config = None
         self._item_sparse = None
         self._item_squish_era = None
+
+    @property
+    def conditional_content_tuning(self) -> ConditionalContentTuningDBC:
+        if not self._conditional_content_tuning:
+            self._conditional_content_tuning = ConditionalContentTuningDBC(self._build)
+        return self._conditional_content_tuning
 
     @property
     def content_tuning(self) -> ContentTuningDBC:
