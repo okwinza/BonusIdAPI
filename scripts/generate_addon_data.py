@@ -256,9 +256,13 @@ def _write_lua(addon_data, path):
 
     squish_index = addon_data["squish_curve"]
     lines.append(f'local squishCurve = curves[{squish_index + 1}]')
+    squish_max = max(float(k) for k in addon_data["curves"][squish_index])
+    squish_max_lua = int(squish_max) if squish_max == int(squish_max) else squish_max
 
     # Return data table
     lines.append('return {')
+    lines.append(f'\tbuild = "{addon_data["build"]}",')
+    lines.append(f'\tsquishMax = {squish_max_lua},')
     lines.append('\tsquishCurve = squishCurve,')
     lines.append('\tbonuses = bonuses,')
     lines.append('\tcurves = curves,')
@@ -725,6 +729,7 @@ if __name__ == '__main__':
     addon_data = {
         "build": build,
         "squish_curve": squish_curve_index,
+        "squish_max": int(max(float(k) for k in curves[squish_curve_index])),
         "bonuses": bonuses,
         "curves": curves,
         "content_tuning": content_tuning,

@@ -20,8 +20,7 @@ class AddonDataAlgorithm(Algorithm):
         self._bonuses = data['bonuses']
         self._curves = data['curves']
         self._squish_curve_index = data['squish_curve']
-        squish_curve = self._curves[self._squish_curve_index]
-        self._squish_max = max(float(k) for k in squish_curve)
+        self._squish_max = data['squish_max']
         self._content_tuning = data['content_tuning']
         # Expand CT remap: add entries pointing non-canonical IDs to canonical data
         for src, dst in data.get('content_tuning_remap', {}).items():
