@@ -17,7 +17,7 @@ class DBCType(ABC):
         super().__init_subclass__(**kwargs)
         members_def = {item[0]: item[1] for item in inspect.getmembers(cls) if item[0] not in _DUMMY_CLASS_MEMBERS}
         annotations = members_def.pop('__annotations__')
-        assert('ID' not in annotations)
+        assert 'ID' not in annotations
         cls.__annotations = annotations
 
     def __init__(self, values: Dict[str,str]):
@@ -47,7 +47,7 @@ class DBCTypeOneToMany(DBCType, ABC):
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         index_fields = [k for k, v in cls._get_annotations().items() if v == DBCTypeOneToMany.Index]
-        assert(len(index_fields) == 1)
+        assert len(index_fields) == 1
         cls.__index_field = index_fields[0] if index_fields else None
 
     def _get_index_value(self) -> Index:
@@ -68,7 +68,7 @@ class DBCFile(Generic[_EntryType], ABC):
         else:
             logging.info("Downloading DBC data (table_name=%s, build=%s)", table_name, build)
             res = requests.get(f"https://wago.tools/db2/{table_name}/csv?build={build}")
-            assert(res.status_code == 200)
+            assert res.status_code == 200
             data = res.content.decode('utf-8')
             entries = [self.EntryType(r) for r in DictReader(data.splitlines(), delimiter=',')]
             self._entries = self._build_entries(entries)
@@ -84,7 +84,7 @@ class DBCFileOneToOne(DBCFile[_EntryTypeOneToOne], Generic[_EntryTypeOneToOne], 
     EntryType: Type[_EntryTypeOneToOne]
 
     def __init_subclass__(cls, **kwargs):
-        assert(issubclass(cls.EntryType, DBCTypeOneToOne))
+        assert issubclass(cls.EntryType, DBCTypeOneToOne)
         super().__init_subclass__(**kwargs)
 
     def _build_entries(self, entries):
@@ -101,7 +101,7 @@ class DBCFileOneToMany(DBCFile[_EntryTypeOneToMany], Generic[_EntryTypeOneToMany
     EntryType: Type[_EntryTypeOneToMany]
 
     def __init_subclass__(cls, **kwargs):
-        assert(issubclass(cls.EntryType, DBCTypeOneToMany))
+        assert issubclass(cls.EntryType, DBCTypeOneToMany)
         super().__init_subclass__(**kwargs)
 
     def _build_entries(self, entries):
@@ -264,7 +264,7 @@ class CurvePointDBC(DBCFileOneToMany[CurvePoint]):
         upper_bound = next((p for p in data if p.Pos_0 >= value), None)
         lower_bound = lower_bound or upper_bound
         upper_bound = upper_bound or lower_bound
-        assert(lower_bound and upper_bound)
+        assert lower_bound and upper_bound
         return (lower_bound, upper_bound)
 
 class ItemBonusDBC(DBCFileOneToMany[ItemBonus]):

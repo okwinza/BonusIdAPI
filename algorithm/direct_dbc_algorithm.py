@@ -188,7 +188,7 @@ class DirectDBCAlgorithm:
         elif upper_bound.Pos_0 < value:
             result = upper_bound.Pos_1
         else:
-            assert(upper_bound.Pos_0 != value)
+            assert upper_bound.Pos_0 != value
             # Linear interpolation
             slope = (upper_bound.Pos_1 - lower_bound.Pos_1) / (upper_bound.Pos_0 - lower_bound.Pos_0)
             result = lower_bound.Pos_1 + slope * (value - lower_bound.Pos_0)
