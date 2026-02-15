@@ -1,22 +1,10 @@
 import json
 import os
 from math import floor
-from typing import Optional
 
 from lib.algorithm import Algorithm
 from lib.item import Item
-from lib.dbc_file import DBC, ItemBonusType
-
-# ItemBonusType values used frequently
-_INCREASE_ITEM_LEVEL = ItemBonusType.INCREASE_ITEM_LEVEL.value
-_SCALING_CONFIG = ItemBonusType.SCALING_CONFIG.value
-_SCALING_CONFIG_2 = ItemBonusType.SCALING_CONFIG_2.value
-_OFFSET_CURVE = ItemBonusType.OFFSET_CURVE.value
-_MIDNIGHT_ITEM_LEVEL = ItemBonusType.MIDNIGHT_ITEM_LEVEL.value
-_BASE_ITEM_LEVEL = ItemBonusType.BASE_ITEM_LEVEL.value
-_CRAFTING_QUALITY = ItemBonusType.CRAFTING_QUALITY.value
-_STAT_SCALING = ItemBonusType.STAT_SCALING.value
-_STAT_FIXED = ItemBonusType.STAT_FIXED.value
+from lib.dbc_file import DBC
 
 
 class AddonDataAlgorithm(Algorithm):
@@ -34,31 +22,21 @@ class AddonDataAlgorithm(Algorithm):
         self._content_tuning = data['content_tuning']
 
     def process_item(self, link: str) -> int:
-        base_item_level, has_midnight_scaling = self._dbc.item_sparse.get_info(Item.get_item_id_from_link(link))
+        base_item_level, has_midnight_scaling = self._dbc.item_sparse.get_info(self.get_item_id_from_link(link))
         item = Item(link, base_item_level, has_midnight_scaling)
 
         bonuses: list[dict] = []
         bonus_ids = self._get_bonus_ids(item)
 
         def collect_bonus(bonus: dict):
-            # Eager midnight scaling (inlined)
-            bt = bonus['type']
-            if bt == _SCALING_CONFIG:
-                if bonus['midnight_scaling']:
-                    item.has_midnight_scaling = True
-            elif bt == _SCALING_CONFIG_2:
-                if bonus['midnight_scaling_era']:
-                    item.has_midnight_scaling = True
-            elif bt == _OFFSET_CURVE:
-                if bonus['has_midnight_scaling']:
-                    item.has_midnight_scaling = True
+            if bonus.get('midnight') == 'set':
+                item.has_midnight_scaling = True
 
-            # Dedup
-            if bt == _INCREASE_ITEM_LEVEL:
+            group = bonus.get('group')
+            if group is None:
                 bonuses.append(bonus)
                 return
-            group = bonus['group']
-            prev_index = next((i for i, b in enumerate(bonuses) if b['group'] == group), None)
+            prev_index = next((i for i, b in enumerate(bonuses) if b.get('group') == group), None)
             if prev_index is None:
                 bonuses.append(bonus)
             else:
@@ -85,66 +63,29 @@ class AddonDataAlgorithm(Algorithm):
             return item.item_level
 
         for bonus in bonuses:
-            bt = bonus['type']
-            if bt == _INCREASE_ITEM_LEVEL:
-                item.item_level = item.item_level + bonus['amount']
-            elif bt == _SCALING_CONFIG:
-                if bonus['curve_id'] is None:
-                    continue
-                scaled_item_level = bonus['item_level'] if bonus['item_level'] else (item.modifier_player_level or 80)
-                if item.modifier_content_tuning_id and bonus['is_midnight_era']:
-                    scaled_item_level = self._apply_content_tuning(scaled_item_level, item.modifier_content_tuning_id, bonus_type=bt)
-                item.item_level = self._get_curve_value(bonus['curve_id'], scaled_item_level) + bonus['offset']
-                if bonus['midnight_scaling']:
-                    item.has_midnight_scaling = True
-                elif item.has_midnight_scaling:
-                    item.item_level = self._get_squish_value(item.item_level)
-            elif bt == _SCALING_CONFIG_2:
-                if bonus['curve_id'] is None:
-                    continue
-                drop_level = item.modifier_player_level or 80
-                if item.modifier_content_tuning_id and not item.modifier_player_level:
-                    drop_level = self._apply_content_tuning(drop_level, item.modifier_content_tuning_id, bt)
-                item.item_level = self._get_curve_value(bonus['curve_id'], drop_level) + bonus['offset']
-                if bonus['midnight_scaling_era']:
-                    item.has_midnight_scaling = True
-                elif item.has_midnight_scaling:
-                    item.item_level = self._get_squish_value(item.item_level)
-            elif bt == _OFFSET_CURVE:
-                item.item_level = bonus['item_level']
-                if bonus['has_midnight_scaling']:
-                    item.has_midnight_scaling = True
-                elif item.has_midnight_scaling:
-                    item.item_level = self._get_squish_value(item.item_level)
-            elif bt == _MIDNIGHT_ITEM_LEVEL:
-                item.item_level += bonus['amount']
-            elif bt == _BASE_ITEM_LEVEL:
-                item.item_level = bonus['item_level']
-            elif bt == _CRAFTING_QUALITY:
-                if not item.has_midnight_scaling:
+            op = bonus['op']
+            if op == 'add':
+                if bonus.get('midnight') == 'force' and not item.has_midnight_scaling:
                     item.has_midnight_scaling = True
                     item.item_level = self._get_squish_value(item.item_level)
                 item.item_level += bonus['amount']
-            elif bt == _STAT_SCALING:
-                if bonus['curve_id'] is None:
-                    continue
-                content_tuning_id = bonus['content_tuning_id']
-                drop_level = item.modifier_player_level or 80
-                if item.modifier_content_tuning_id:
-                    drop_level = self._apply_content_tuning(drop_level, item.modifier_content_tuning_id, bt)
-                elif content_tuning_id:
-                    drop_level = self._apply_content_tuning(drop_level, content_tuning_id, bt)
-                item.item_level = self._get_curve_value(bonus['curve_id'], drop_level)
-            elif bt == _STAT_FIXED:
-                if bonus['curve_id'] is None:
-                    continue
-                content_tuning_id = bonus['content_tuning_id']
-                drop_level = item.modifier_player_level or 80
-                if item.modifier_content_tuning_id:
-                    drop_level = self._apply_content_tuning(drop_level, item.modifier_content_tuning_id, bt)
-                elif content_tuning_id:
-                    drop_level = self._apply_content_tuning(drop_level, content_tuning_id, bt)
-                item.item_level = self._get_curve_value(bonus['curve_id'], drop_level)
+            elif op == 'set':
+                item.item_level = bonus['item_level']
+            elif op == 'scale':
+                drop_level = bonus.get('default_level') or item.modifier_player_level or 80
+                if 'ct_key' in bonus:
+                    ct = item.modifier_content_tuning_id or bonus.get('ct_id')
+                    if ct and (not bonus.get('ct_default_only') or not item.modifier_player_level):
+                        drop_level = self._apply_content_tuning(drop_level, ct, bonus['ct_key'])
+                item.item_level = self._get_curve_value(bonus['curve_id'], drop_level) + bonus.get('offset', 0)
+
+            # Unified post-op midnight handling
+            midnight = bonus.get('midnight')
+            if midnight == 'set':
+                item.has_midnight_scaling = True
+            elif midnight == 'squish' and item.has_midnight_scaling:
+                item.item_level = self._get_squish_value(item.item_level)
+
         item.item_level = max(item.item_level, 1)
         if not item.has_midnight_scaling:
             item.item_level = self._get_squish_value(item.item_level)
@@ -209,16 +150,11 @@ class AddonDataAlgorithm(Algorithm):
         """Alias for test runner compatibility."""
         return self._get_squish_value(value)
 
-    def _apply_content_tuning(self, drop_level: int, content_tuning_id: int, bonus_type: Optional[int] = None) -> int:
+    def _apply_content_tuning(self, drop_level: int, content_tuning_id: int, ct_key: str) -> int:
         ct = self._content_tuning.get(str(content_tuning_id))
         if not ct:
             return drop_level
-        if bonus_type in (_STAT_SCALING, _STAT_FIXED):
-            op = ct.get('stat')
-        elif bonus_type == _SCALING_CONFIG:
-            op = ct.get('sc')
-        else:
-            op = ct.get('sc2')
+        op = ct.get(ct_key)
         if not op:
             return drop_level
         name = op[0]

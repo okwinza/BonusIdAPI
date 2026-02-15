@@ -2,16 +2,17 @@ from functools import cmp_to_key
 from math import floor
 from typing import Optional
 
+from lib.algorithm import Algorithm
 from lib.dbc_file import CurveType, DBC, ItemBonus, ItemBonusType
 from lib.item import Item
 
 
-class DirectDBCAlgorithm:
+class DirectDBCAlgorithm(Algorithm):
     def __init__(self, dbc: DBC):
         self._dbc = dbc
 
     def process_item(self, link: str) -> int:
-        base_item_level, has_midnight_scaling = self._dbc.item_sparse.get_info(Item.get_item_id_from_link(link))
+        base_item_level, has_midnight_scaling = self._dbc.item_sparse.get_info(self.get_item_id_from_link(link))
         item = Item(link, base_item_level, has_midnight_scaling)
 
         bonuses: list[ItemBonus] = []

@@ -1,12 +1,6 @@
-import re
-
 class Item:
     _DROP_LEVEL_MODIFIER_TYPE = 9
     _CONTENT_TUNING_ID_MODIFIER_TYPE = 28
-
-    @staticmethod
-    def get_item_id_from_link(link: str) -> int:
-        return int(re.search(r"item:([0-9]+):", link).group(1))
 
     def __init__(self, link: str, base_item_level: int, has_midnight_scaling: bool = False):
         self.item_level = base_item_level

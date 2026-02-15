@@ -21,14 +21,8 @@ def _sort_priority(bonus_type):
     return 0
 
 
-def _bonus_group(bonus_type):
-    if bonus_type in (ItemBonusType.CRAFTING_QUALITY, ItemBonusType.MIDNIGHT_ITEM_LEVEL):
-        return ItemBonusType.CRAFTING_QUALITY.value
-    if bonus_type in (ItemBonusType.OFFSET_CURVE, ItemBonusType.SCALING_CONFIG,
-                      ItemBonusType.SCALING_CONFIG_2, ItemBonusType.STAT_SCALING,
-                      ItemBonusType.STAT_FIXED, ItemBonusType.BASE_ITEM_LEVEL):
-        return ItemBonusType.SCALING_CONFIG.value
-    return bonus_type.value
+_GROUP_SCALE = 49   # SCALING_CONFIG group value
+_GROUP_CQ = 52      # CRAFTING_QUALITY / MIDNIGHT_ITEM_LEVEL group value
 
 
 def _get_curve_point_value(dbc, curve_id, value):
@@ -45,82 +39,106 @@ def _get_curve_point_value(dbc, curve_id, value):
 
 
 def _export_bonus(entry, dbc):
-    """Convert a DBC ItemBonus entry to a dict with type-specific named fields.
+    """Convert a DBC ItemBonus entry to an operation dict.
     Returns None for entries that have no effect on item level calculation."""
     bt = entry.bonus_type
-    base = {'type': entry.Type.value, 'group': _bonus_group(bt)}
+
     if bt == ItemBonusType.INCREASE_ITEM_LEVEL:
         if not entry.Value_0:
             return None
-        base['amount'] = entry.Value_0
+        return {'op': 'add', 'amount': entry.Value_0}
+
     elif bt in (ItemBonusType.SCALING_CONFIG, ItemBonusType.SCALING_CONFIG_2):
-        base['priority'] = entry.Value_1
-        # Inline scaling config data
-        if dbc.item_scaling_config.has(entry.Value_0):
-            sc = dbc.item_scaling_config.get(entry.Value_0)
-            base['midnight_scaling'] = sc.ItemSquishEraID != 1 or bool(sc.Flags & 1)
-            base['midnight_scaling_era'] = sc.ItemSquishEraID != 1
-            if dbc.item_offset_curve.has(sc.ItemOffsetCurveID):
-                oc = dbc.item_offset_curve.get(sc.ItemOffsetCurveID)
-                base['curve_id'] = oc.CurveID
-                base['offset'] = oc.Offset
-                base['item_level'] = sc.ItemLevel
-                base['is_midnight_era'] = sc.ItemSquishEraID == 2
-            else:
-                base['curve_id'] = None
+        if not dbc.item_scaling_config.has(entry.Value_0):
+            return None
+        sc = dbc.item_scaling_config.get(entry.Value_0)
+        if not dbc.item_offset_curve.has(sc.ItemOffsetCurveID):
+            return None
+        oc = dbc.item_offset_curve.get(sc.ItemOffsetCurveID)
+
+        # Determine midnight handling
+        if bt == ItemBonusType.SCALING_CONFIG:
+            sets_midnight = sc.ItemSquishEraID != 1 or bool(sc.Flags & 1)
         else:
-            base['midnight_scaling'] = False
-            base['midnight_scaling_era'] = False
-            base['curve_id'] = None
+            sets_midnight = sc.ItemSquishEraID != 1
+
+        result = {
+            'op': 'scale',
+            'group': _GROUP_SCALE,
+            'priority': entry.Value_1,
+            'curve_id': oc.CurveID,
+            'offset': oc.Offset,
+            'midnight': 'set' if sets_midnight else 'squish',
+        }
+        if bt == ItemBonusType.SCALING_CONFIG:
+            if sc.ItemLevel:
+                result['default_level'] = sc.ItemLevel
+            if sc.ItemSquishEraID == 2:
+                result['ct_key'] = 'sc'
+        else:
+            result['ct_key'] = 'sc2'
+            result['ct_default_only'] = True
+        return result
+
     elif bt == ItemBonusType.OFFSET_CURVE:
-        # Pre-compute the curve interpolation result (both inputs are static)
         curve_id = entry.Value_0
         input_value = entry.Value_1
         if curve_id and dbc.curve_point.get(curve_id):
-            base['item_level'] = _get_curve_point_value(dbc, curve_id, input_value)
+            item_level = _get_curve_point_value(dbc, curve_id, input_value)
         else:
-            base['item_level'] = 0
-        base['has_midnight_scaling'] = entry.Value_2 != 1
+            item_level = 0
+        sets_midnight = entry.Value_2 != 1
+        return {
+            'op': 'set',
+            'group': _GROUP_SCALE,
+            'item_level': item_level,
+            'midnight': 'set' if sets_midnight else 'squish',
+        }
+
     elif bt == ItemBonusType.MIDNIGHT_ITEM_LEVEL:
-        base['amount'] = entry.Value_0
+        return {'op': 'add', 'group': _GROUP_CQ, 'amount': entry.Value_0}
+
     elif bt == ItemBonusType.BASE_ITEM_LEVEL:
-        base['item_level'] = entry.Value_0
+        return {'op': 'set', 'group': _GROUP_SCALE, 'item_level': entry.Value_0}
+
     elif bt == ItemBonusType.CRAFTING_QUALITY:
-        base['amount'] = entry.Value_2 if entry.Value_1 == 1 else entry.Value_0
+        amount = entry.Value_2 if entry.Value_1 == 1 else entry.Value_0
+        return {'op': 'add', 'group': _GROUP_CQ, 'amount': amount, 'midnight': 'force'}
+
     elif bt in (ItemBonusType.STAT_SCALING, ItemBonusType.STAT_FIXED):
         curve_id = entry.Value_3
         if not curve_id:
-            base['curve_id'] = None
+            return None
         elif not dbc.curve_point.get(curve_id):
             if bt == ItemBonusType.STAT_FIXED:
-                # Curve exists but no data points — game produces item level 1
-                # Emit as BASE_ITEM_LEVEL so the algorithm handles it directly
-                base['type'] = ItemBonusType.BASE_ITEM_LEVEL.value
-                base['item_level'] = 1
-                return base
-            base['curve_id'] = None
-        else:
-            base['curve_id'] = curve_id
-        base['content_tuning_id'] = entry.Value_2
+                return {'op': 'set', 'group': _GROUP_SCALE, 'item_level': 1}
+            return None
+        result = {
+            'op': 'scale',
+            'group': _GROUP_SCALE,
+            'curve_id': curve_id,
+            'ct_key': 'stat',
+        }
+        if entry.Value_2:
+            result['ct_id'] = entry.Value_2
+        return result
+
     elif bt == ItemBonusType.APPLY_BONUS:
-        base['target'] = entry.Value_0
+        return {'op': 'apply', 'target': entry.Value_0}
+
     else:
-        # Unknown bonus types don't affect item level — their dedup groups
-        # don't overlap with known types, so they're safe to omit
         return None
-    return base
 
 
 def _dedup_entries(entries):
-    """Keep only the last entry per group (INCREASE_ITEM_LEVEL always kept)."""
+    """Keep only the last entry per group. Entries without a group always kept."""
     seen = {}  # group -> index
     for i, entry in enumerate(entries):
-        if entry['type'] == ItemBonusType.INCREASE_ITEM_LEVEL.value:
-            continue
-        seen[entry['group']] = i
-    # Build result: INCREASE_ITEM_LEVEL entries always, others only if last in group
+        group = entry.get('group')
+        if group is not None:
+            seen[group] = i
     return [e for i, e in enumerate(entries)
-            if e['type'] == ItemBonusType.INCREASE_ITEM_LEVEL.value or seen.get(e['group']) == i]
+            if 'group' not in e or seen.get(e['group']) == i]
 
 
 def _compact_number(v):
@@ -171,7 +189,7 @@ if __name__ == '__main__':
         for bonus in exported_entries:
             if bonus is None:
                 continue
-            if bonus['type'] == ItemBonusType.APPLY_BONUS.value:
+            if bonus['op'] == 'apply':
                 target_id = bonus['target']
                 for target_entry in dbc.item_bonus.get(target_id):
                     if target_entry.bonus_type != ItemBonusType.APPLY_BONUS:
