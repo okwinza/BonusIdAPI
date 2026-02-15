@@ -8,6 +8,8 @@ from math import floor
 
 from lib.dbc_file import CurveType, DBC, ItemBonusType
 
+ADDON_DATA_VERSION = 1
+
 _LUA_KEYWORDS = frozenset({
     'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for',
     'function', 'goto', 'if', 'in', 'local', 'nil', 'not', 'or',
@@ -202,33 +204,37 @@ def _find_runs(entries, min_run=3):
     return segments
 
 
-def _write_lua(addon_data, path):
+def _write_lua(addon_data, path, crlf=False):
     """Write addon data as a Lua file with loop compression."""
     lines = []
+
+    # Early-out if we shouldn't load this data
+    build = addon_data["build"]
+    lines.append(f'local DATA_VERSION = {ADDON_DATA_VERSION}')
+    lines.append(f'local BUILD = "{build}"')
+    lines.append('local Lib = LibStub("LibBonusId") ---@type LibBonusId')
+    lines.append('if not Lib.ShouldLoadData(DATA_VERSION, BUILD) then return end')
 
     # Bonuses (compressed with loops)
     sorted_bonus_ids = sorted(addon_data['bonuses'].keys(), key=int)
     bonus_entries = [(int(k), addon_data['bonuses'][k]) for k in sorted_bonus_ids]
     bonus_segments = _find_runs(bonus_entries)
 
-    lines.append('local bonuses, contentTuning')
-    lines.append('do')
-
-    lines.append('\tbonuses = {}')
+    lines.append('local bonuses = {}')
     for seg in bonus_segments:
         if seg[0] == 'single':
             _, bid, val = seg
-            lines.append(f'\tbonuses[{bid}] = {_lua_value(val)}')
+            lines.append(f'bonuses[{bid}] = {_lua_value(val)}')
         else:
             _, start, end, base_val, varying = seg
             template = _lua_value_with_subs(base_val, varying)
-            lines.append(f'\tfor i = {start}, {end} do bonuses[i] = {template} end')
+            lines.append(f'for i = {start}, {end} do bonuses[i] = {template} end')
 
     # Content tuning
-    lines.append('\tcontentTuning = {')
+    lines.append('local contentTuning = {')
     for k in sorted(addon_data['content_tuning'].keys(), key=int):
-        lines.append(f'\t\t[{k}] = {_lua_value(addon_data["content_tuning"][k])},')
-    lines.append('\t}')
+        lines.append(f'\t[{k}] = {_lua_value(addon_data["content_tuning"][k])},')
+    lines.append('}')
 
     # CT remap (inline assignments into contentTuning)
     ct_remap = addon_data.get('content_tuning_remap', {})
@@ -240,13 +246,11 @@ def _write_lua(addon_data, path):
         for seg in ct_segments:
             if seg[0] == 'single':
                 _, src, dst = seg
-                lines.append(f'\tcontentTuning[{src}] = contentTuning[{dst}]')
+                lines.append(f'contentTuning[{src}] = contentTuning[{dst}]')
             else:
                 _, start, end, base_val, varying = seg
                 template = _lua_value_with_subs(base_val, varying)
-                lines.append(f'\tfor i = {start}, {end} do contentTuning[i] = contentTuning[{template}] end')
-
-    lines.append('end')
+                lines.append(f'for i = {start}, {end} do contentTuning[i] = contentTuning[{template}] end')
 
     # Curves
     lines.append('local curves = {')
@@ -259,18 +263,21 @@ def _write_lua(addon_data, path):
     squish_max = max(float(k) for k in addon_data["curves"][squish_index])
     squish_max_lua = int(squish_max) if squish_max == int(squish_max) else squish_max
 
-    # Return data table
-    lines.append('return {')
-    lines.append(f'\tbuild = "{addon_data["build"]}",')
+    # Pass data to LibBonusId
+    lines.append('Lib.LoadData({')
+    lines.append('\tversion = DATA_VERSION,')
+    lines.append('\tbuild = BUILD,')
+
     lines.append(f'\tsquishMax = {squish_max_lua},')
     lines.append('\tsquishCurve = squishCurve,')
     lines.append('\tbonuses = bonuses,')
     lines.append('\tcurves = curves,')
     lines.append('\tcontentTuning = contentTuning,')
-    lines.append('}')
+    lines.append('})')
 
-    with open(path, 'w') as f:
-        f.write('\n'.join(lines) + '\n')
+    newline = '\r\n' if crlf else '\n'
+    with open(path, 'w', newline='') as f:
+        f.write(newline.join(lines) + newline)
 
 
 def _sort_priority(bonus_type):
@@ -741,10 +748,13 @@ if __name__ == '__main__':
     with open(output_path, 'w') as f:
         json.dump(addon_data, f, indent=2)
 
-    lua_path = os.path.join('.cache', build, 'addon_data.lua')
-    _write_lua(addon_data, lua_path)
+    lua_cache_path = os.path.join('.cache', build, 'addon_data.lua')
+    _write_lua(addon_data, lua_cache_path)
 
-    logging.info("Wrote addon data to %s and %s", output_path, lua_path)
+    lua_root_path = 'Data.lua'
+    _write_lua(addon_data, lua_root_path, crlf=True)
+
+    logging.info("Wrote addon data to %s, %s, and %s", output_path, lua_cache_path, lua_root_path)
     logging.info("Bonuses: %d bonus list IDs", len(bonuses))
     logging.info("Curves: %d curves (%d total points)",
                  len(curves), sum(len(v) for v in curves))

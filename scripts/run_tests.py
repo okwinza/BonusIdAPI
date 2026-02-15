@@ -13,8 +13,15 @@ from lib.addon_data_algorithm import AddonDataAlgorithm
 from lib.direct_dbc_algorithm import DirectDBCAlgorithm
 from lib.dbc_file import DBC
 
-MAX_BONUS_ID = 13671
-MAX_CONTENT_TUNING_ID = 7000
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _read_test_data_lines(file_name: str):
+    with open(os.path.join(SCRIPT_DIR, 'test_data', file_name)) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                yield line
 
 
 class GameTestData:
@@ -23,25 +30,21 @@ class GameTestData:
         self._data = data
 
     @classmethod
-    def from_file(cls, path: str) -> list[Self]:
+    def from_file(cls, file_name: str) -> list[Self]:
         result = []
-        with open(path) as f:
-            link_pattern = None
-            data = {}
-            for line in f.readlines():
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith("|"):
-                    if link_pattern:
-                        result.append(cls(link_pattern, data))
-                    link_pattern = line
-                    data = {}
-                else:
-                    id, value = line.split(',')
-                    data[int(id)] = int(value)
-            if link_pattern:
-                result.append(cls(link_pattern, data))
+        link_pattern = None
+        data = {}
+        for line in _read_test_data_lines(file_name):
+            if line.startswith("|"):
+                if link_pattern:
+                    result.append(cls(link_pattern, data))
+                link_pattern = line
+                data = {}
+            else:
+                id, value = line.split(',')
+                data[int(id)] = int(value)
+        if link_pattern:
+            result.append(cls(link_pattern, data))
         return result
 
     def get_link(self, id: int) -> int:
@@ -57,15 +60,11 @@ class GameTestLink:
     expected: int
 
     @classmethod
-    def from_file(cls, path: str) -> list[Self]:
+    def from_file(cls, file_name: str) -> list[Self]:
         result = []
-        with open(path) as f:
-            for line in f.readlines():
-                line = line.strip()
-                if not line:
-                    continue
-                expected, link = re.search(r"^([0-9]+),(.+)$", line).groups()
-                result.append(cls(link, int(expected)))
+        for line in _read_test_data_lines(file_name):
+            expected, link = re.search(r"^([0-9]+),(.+)$", line).groups()
+            result.append(cls(link, int(expected)))
         return result
 
 
@@ -74,7 +73,7 @@ class LuaAlgorithm(Algorithm):
         self._dbc = dbc
         lua_data_path = os.path.join('.cache', build, 'addon_data.lua')
         self._proc = subprocess.Popen(
-            ['lua', 'lua/test_runner.lua', lua_data_path],
+            ['lua', os.path.join(SCRIPT_DIR, 'test_runner.lua'), lua_data_path],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, bufsize=1,
         )
@@ -115,9 +114,9 @@ class Test:
 
     def _test_algorithm(self, algorithm: Algorithm):
         logging.info("Checking single bonus ID test data...")
-        for data in GameTestData.from_file("test_data/single_bonus_id.txt"):
+        for data in GameTestData.from_file("single_bonus_id.txt"):
             default_item_level = algorithm.process_item(data.get_link(0))
-            for bonus_id in range(MAX_BONUS_ID + 1):
+            for bonus_id in range(14000):
                 # There's a bug in the DBC where 3524 has a "No Bonus" bonus but in reality is a "Scaling Config"
                 # bonus which acts the same as 7753.
                 if bonus_id == 3524:
@@ -128,16 +127,16 @@ class Test:
                     logging.error("bonusId=%d, itemLevel=%d, expected=%d", bonus_id, item_level, expected)
 
         logging.info("Checking content tuning ID test data...")
-        for data in GameTestData.from_file("test_data/content_tuning_id.txt"):
+        for data in GameTestData.from_file("content_tuning_id.txt"):
             default_item_level = algorithm.process_item(data.get_link(0))
-            for content_tuning_id in range(MAX_CONTENT_TUNING_ID + 1):
+            for content_tuning_id in range(7000):
                 item_level = algorithm.process_item(data.get_link(content_tuning_id))
                 expected = data.get_value(content_tuning_id, default_item_level)
                 if item_level != expected:
                     logging.error("contentTuningId=%d, itemLevel=%d, expected=%d", content_tuning_id, item_level, expected)
 
         logging.info("Checking test links...")
-        for data in GameTestLink.from_file("test_data/links.txt"):
+        for data in GameTestLink.from_file("links.txt"):
             item_level = algorithm.process_item(data.link)
             if item_level != data.expected:
                 logging.error("link='%s', itemLevel=%d, expected=%d", data.link, item_level, data.expected)
