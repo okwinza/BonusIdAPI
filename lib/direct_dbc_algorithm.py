@@ -2,8 +2,8 @@ from functools import cmp_to_key
 from math import floor
 from typing import Optional
 
-from dbc.dbc_file import CurveType, DBC, ItemBonus, ItemBonusType
-from algorithm.item import Item
+from lib.dbc_file import CurveType, DBC, ItemBonus, ItemBonusType
+from lib.item import Item
 
 
 class DirectDBCAlgorithm:

@@ -6,10 +6,10 @@ import logging
 import re
 from typing import Self
 
-from algorithm.algorithm import Algorithm
-from algorithm.addon_data_algorithm import AddonDataAlgorithm
-from algorithm.direct_dbc_algorithm import DirectDBCAlgorithm
-from dbc.dbc_file import DBC
+from lib.algorithm import Algorithm
+from lib.addon_data_algorithm import AddonDataAlgorithm
+from lib.direct_dbc_algorithm import DirectDBCAlgorithm
+from lib.dbc_file import DBC
 
 MAX_BONUS_ID = 13671
 MAX_CONTENT_TUNING_ID = 7000

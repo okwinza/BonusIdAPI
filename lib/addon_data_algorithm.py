@@ -3,9 +3,9 @@ import os
 from math import floor
 from typing import Optional
 
-from algorithm.algorithm import Algorithm
-from algorithm.item import Item
-from dbc.dbc_file import DBC, ItemBonusType
+from lib.algorithm import Algorithm
+from lib.item import Item
+from lib.dbc_file import DBC, ItemBonusType
 
 # ItemBonusType values used frequently
 _INCREASE_ITEM_LEVEL = ItemBonusType.INCREASE_ITEM_LEVEL.value
@@ -30,6 +30,7 @@ class AddonDataAlgorithm(Algorithm):
         self._bonuses = data['bonuses']
         self._curves = data['curves']
         self._squish_curve = data['squish_curve']
+        self._squish_keys = sorted(float(k) for k in self._squish_curve)
         self._content_tuning = data['content_tuning']
 
     def process_item(self, link: str) -> int:
@@ -174,21 +175,22 @@ class AddonDataAlgorithm(Algorithm):
 
     def _get_squish_value(self, value: float) -> int:
         points = self._squish_curve
+        keys = self._squish_keys
         # Above max → 1
-        if value > points[-1][0]:
+        if value > keys[-1]:
             return 1
         return self._interpolate(points, value)
 
     @staticmethod
-    def _interpolate(points: list, value: float) -> int:
-        # Match find_points: last point with x <= value, first point with x >= value
-        lower = None
-        upper = None
-        for p in reversed(points):
+    def _interpolate(points: dict, value: float) -> int:
+        pairs = sorted(((float(k), v) for k, v in points.items()), key=lambda p: p[0])
+        # Find lower (last x <= value) and upper (first x >= value)
+        lower = upper = None
+        for p in reversed(pairs):
             if p[0] <= value:
                 lower = p
                 break
-        for p in points:
+        for p in pairs:
             if p[0] >= value:
                 upper = p
                 break
