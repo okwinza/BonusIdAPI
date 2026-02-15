@@ -24,7 +24,7 @@ class AddonDataAlgorithm(Algorithm):
         self._squish_max = max(float(k) for k in squish_curve)
         self._content_tuning = data['content_tuning']
         # Expand CT remap: add entries pointing non-canonical IDs to canonical data
-        for src, dst in data.get('ct_remap', {}).items():
+        for src, dst in data.get('content_tuning_remap', {}).items():
             dst_str = str(dst)
             if dst_str in self._content_tuning:
                 self._content_tuning[str(src)] = self._content_tuning[dst_str]
@@ -92,10 +92,10 @@ class AddonDataAlgorithm(Algorithm):
                 item.item_level = bonus['item_level']
             elif op == 'scale':
                 drop_level = bonus.get('default_level') or item.modifier_player_level or 80
-                if 'ct_key' in bonus:
-                    ct = item.modifier_content_tuning_id or bonus.get('ct_id')
-                    if ct and (not bonus.get('ct_default_only') or not item.modifier_player_level):
-                        drop_level = self._apply_content_tuning(drop_level, ct, bonus['ct_key'])
+                if 'content_tuning_key' in bonus:
+                    ct = item.modifier_content_tuning_id or bonus.get('content_tuning_id')
+                    if ct and (not bonus.get('content_tuning_default_only') or not item.modifier_player_level):
+                        drop_level = self._apply_content_tuning(drop_level, ct, bonus['content_tuning_key'])
                 item.item_level = self._get_curve_value(bonus['curve_id'], drop_level) + bonus.get('offset', 0)
 
             # Unified post-op midnight handling
@@ -118,7 +118,7 @@ class AddonDataAlgorithm(Algorithm):
                 bonus_ids.append(data['redirect'])
             else:
                 bonus_ids.append(id)
-        bonus_ids.sort(key=lambda id: (self._bonuses.get(str(id), {}).get('sp', 0), id))
+        bonus_ids.sort(key=lambda id: (self._bonuses.get(str(id), {}).get('sort_priority', 0), id))
         return bonus_ids
 
     def _get_curve_value(self, curve_id: int, value: float) -> int:

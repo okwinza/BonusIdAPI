@@ -2,6 +2,7 @@ local floor = math.floor
 local min = math.min
 local max = math.max
 local sort = table.sort
+local tinsert = table.insert
 
 local OP_GROUP = { scale = "S", set = "S", add = "Q" }
 
@@ -83,9 +84,9 @@ local M = {}
 function M.new(data)
     local bonuses = data.bonuses
     local curves = data.curves
-    local squishCurveIndex = data.squish_curve
+    local squishCurveIndex = data.squishCurve
     local squishCurve = curves[squishCurveIndex + 1]
-    local contentTuning = data.content_tuning
+    local contentTuning = data.contentTuning
 
     -- Pre-compute max squish key
     local squishMax = -math.huge
@@ -94,8 +95,8 @@ function M.new(data)
     end
 
     -- Expand CT remap
-    if data.ct_remap then
-        for src, dst in pairs(data.ct_remap) do
+    if data.contentTuningRemap then
+        for src, dst in pairs(data.contentTuningRemap) do
             if contentTuning[dst] then
                 contentTuning[src] = contentTuning[dst]
             end
@@ -127,9 +128,9 @@ function M.new(data)
             return min(max(dropLevel, op[2]), op[3])
         elseif name == "const" then
             return op[2]
-        elseif name == "cap_add" then
+        elseif name == "capAdd" then
             return min(dropLevel, op[2]) + op[3]
-        elseif name == "cap_add_floor" then
+        elseif name == "capAddFloor" then
             return max(min(dropLevel, op[2]) + op[3], op[4])
         end
         return dropLevel
@@ -146,8 +147,8 @@ function M.new(data)
             end
         end
         sort(result, function(a, b)
-            local spA = (bonuses[a] or {}).sp or 0
-            local spB = (bonuses[b] or {}).sp or 0
+            local spA = (bonuses[a] or {}).sortPriority or 0
+            local spB = (bonuses[b] or {}).sortPriority or 0
             if spA ~= spB then return spA < spB end
             return a < b
         end)
@@ -229,7 +230,7 @@ function M.new(data)
 
         for _, bonus in ipairs(collected) do
             local op = bonus.op
-            if op == "legacy_add" then
+            if op == "legacyAdd" then
                 itemLevel = itemLevel + bonus.amount
             elseif op == "add" then
                 if bonus.midnight == "force" and not midnightScaling then
@@ -238,27 +239,27 @@ function M.new(data)
                 end
                 itemLevel = itemLevel + bonus.amount
             elseif op == "set" then
-                itemLevel = bonus.item_level
+                itemLevel = bonus.itemLevel
             elseif op == "scale" then
                 local dropLevel
-                if bonus.default_level and bonus.default_level ~= 0 then
-                    dropLevel = bonus.default_level
+                if bonus.defaultLevel and bonus.defaultLevel ~= 0 then
+                    dropLevel = bonus.defaultLevel
                 elseif playerLevel ~= 0 then
                     dropLevel = playerLevel
                 else
                     dropLevel = 80
                 end
 
-                if bonus.ct_key then
+                if bonus.contentTuningKey then
                     local ct = contentTuningId
-                    if ct == 0 then ct = bonus.ct_id end
+                    if ct == 0 then ct = bonus.contentTuningId end
                     if ct and ct ~= 0
-                        and (not bonus.ct_default_only or playerLevel == 0)
+                        and (not bonus.contentTuningDefaultOnly or playerLevel == 0)
                     then
-                        dropLevel = applyContentTuning(dropLevel, ct, bonus.ct_key)
+                        dropLevel = applyContentTuning(dropLevel, ct, bonus.contentTuningKey)
                     end
                 end
-                itemLevel = getCurveValue(bonus.curve_id, dropLevel) + (bonus.offset or 0)
+                itemLevel = getCurveValue(bonus.curveId, dropLevel) + (bonus.offset or 0)
             end
 
             -- Post-op midnight handling

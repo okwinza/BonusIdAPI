@@ -15,6 +15,12 @@ _LUA_KEYWORDS = frozenset({
 })
 
 
+def _snake_to_camel(s):
+    """Convert snake_case to camelCase."""
+    parts = s.split('_')
+    return parts[0] + ''.join(p.capitalize() for p in parts[1:])
+
+
 def _lua_key(k):
     """Format a Python dict key as a Lua table key."""
     if isinstance(k, int):
@@ -28,8 +34,9 @@ def _lua_key(k):
                 return f'[{float(k)}]'
             except ValueError:
                 pass
-        if k.isidentifier() and k not in _LUA_KEYWORDS:
-            return k
+        camel = _snake_to_camel(k)
+        if camel.isidentifier() and camel not in _LUA_KEYWORDS:
+            return camel
     return f'["{k}"]'
 
 
@@ -42,7 +49,7 @@ def _lua_value(val):
     if isinstance(val, float):
         return str(int(val)) if val == int(val) else str(val)
     if isinstance(val, str):
-        return f'"{val}"'
+        return f'"{_snake_to_camel(val)}"'
     if isinstance(val, list):
         return '{' + ', '.join(_lua_value(v) for v in val) + '}'
     if isinstance(val, dict):
@@ -106,7 +113,7 @@ def _lua_value_with_subs(val, subs, path=()):
     if isinstance(val, float):
         return str(int(val)) if val == int(val) else str(val)
     if isinstance(val, str):
-        return f'"{val}"'
+        return f'"{_snake_to_camel(val)}"'
     if isinstance(val, list):
         return '{' + ', '.join(_lua_value_with_subs(v, subs, path + (i,)) for i, v in enumerate(val)) + '}'
     if isinstance(val, dict):
@@ -204,7 +211,7 @@ def _write_lua(addon_data, path):
     bonus_entries = [(int(k), addon_data['bonuses'][k]) for k in sorted_bonus_ids]
     bonus_segments = _find_runs(bonus_entries)
 
-    lines.append('local bonuses, ct_remap')
+    lines.append('local bonuses, contentTuningRemap')
     lines.append('do')
 
     lines.append('\tbonuses = {}')
@@ -218,27 +225,27 @@ def _write_lua(addon_data, path):
             lines.append(f'\tfor i = {start}, {end} do bonuses[i] = {template} end')
 
     # CT remap (compressed with loops)
-    ct_remap = addon_data.get('ct_remap', {})
+    ct_remap = addon_data.get('content_tuning_remap', {})
     if ct_remap:
         sorted_ct_keys = sorted(ct_remap.keys())
         ct_entries = [(int(k), ct_remap[k]) for k in sorted_ct_keys]
         ct_segments = _find_runs(ct_entries)
 
-        lines.append('\tct_remap = {}')
+        lines.append('\tcontentTuningRemap = {}')
         for seg in ct_segments:
             if seg[0] == 'single':
                 _, src, dst = seg
-                lines.append(f'\tct_remap[{src}] = {dst}')
+                lines.append(f'\tcontentTuningRemap[{src}] = {dst}')
             else:
                 _, start, end, base_val, varying = seg
                 template = _lua_value_with_subs(base_val, varying)
-                lines.append(f'\tfor i = {start}, {end} do ct_remap[i] = {template} end')
+                lines.append(f'\tfor i = {start}, {end} do contentTuningRemap[i] = {template} end')
 
     lines.append('end')
 
     # Return data table
     lines.append('return {')
-    lines.append(f'\tsquish_curve = {addon_data["squish_curve"]},')
+    lines.append(f'\tsquishCurve = {addon_data["squish_curve"]},')
     lines.append('\tbonuses = bonuses,')
 
     # Curves (inline)
@@ -248,13 +255,13 @@ def _write_lua(addon_data, path):
     lines.append('\t},')
 
     # Content tuning (inline)
-    lines.append('\tcontent_tuning = {')
+    lines.append('\tcontentTuning = {')
     for k in sorted(addon_data['content_tuning'].keys(), key=int):
         lines.append(f'\t\t[{k}] = {_lua_value(addon_data["content_tuning"][k])},')
     lines.append('\t},')
 
     if ct_remap:
-        lines.append('\tct_remap = ct_remap,')
+        lines.append('\tcontentTuningRemap = contentTuningRemap,')
 
     lines.append('}')
 
@@ -326,10 +333,10 @@ def _export_bonus(entry, dbc):
             if sc.ItemLevel:
                 result['default_level'] = sc.ItemLevel
             if sc.ItemSquishEraID == 2:
-                result['ct_key'] = 'sc'
+                result['content_tuning_key'] = 'scaling_config'
         else:
-            result['ct_key'] = 'sc2'
-            result['ct_default_only'] = True
+            result['content_tuning_key'] = 'scaling_config2'
+            result['content_tuning_default_only'] = True
         return result
 
     elif bt == ItemBonusType.OFFSET_CURVE:
@@ -367,10 +374,10 @@ def _export_bonus(entry, dbc):
         result = {
             'op': 'scale',
             'curve_id': curve_id,
-            'ct_key': 'stat',
+            'content_tuning_key': 'stat',
         }
         if entry.Value_2:
-            result['ct_id'] = entry.Value_2
+            result['content_tuning_id'] = entry.Value_2
         return result
 
     elif bt == ItemBonusType.APPLY_BONUS:
@@ -432,7 +439,7 @@ if __name__ == '__main__':
             if not any(e.bonus_type == ItemBonusType.APPLY_BONUS for e in target_entries):
                 redirect = {'redirect': target_id}
                 if sp:
-                    redirect['sp'] = sp
+                    redirect['sort_priority'] = sp
                 bonuses[str(parent_id)] = redirect
                 continue
 
@@ -461,7 +468,7 @@ if __name__ == '__main__':
             continue
         data = dict(ops[0])
         if sp:
-            data['sp'] = sp
+            data['sort_priority'] = sp
         if indirect:
             data['indirect'] = True
         if len(ops) > 1:
@@ -525,7 +532,7 @@ if __name__ == '__main__':
             continue
         simplified = _simplify_scale(bonus)
         if simplified is not bonus:
-            for key in ('sp', 'indirect', 'other'):
+            for key in ('sort_priority', 'indirect', 'other'):
                 if key in bonus:
                     simplified[key] = bonus[key]
             bonuses[bid] = simplified
@@ -576,7 +583,7 @@ if __name__ == '__main__':
                  len(curves), sum(len(v) for v in curves))
 
     # Pre-compute content tuning operations per bonus-type group.
-    # Groups: 'sc' (SCALING_CONFIG), 'sc2' (SCALING_CONFIG_2), 'stat' (STAT_SCALING/STAT_FIXED)
+    # Groups: 'scaling_config', 'scaling_config2', 'stat'
     # Operations: ["cap", max], ["clamp", min, max], ["const", val],
     #             ["cap_add", cap, offset], ["cap_add_floor", cap, offset, floor]
     # None = passthrough (omitted from output)
@@ -592,7 +599,7 @@ if __name__ == '__main__':
 
         if max_so == 3:
             op = ['cap', 70 + max_lvl]
-            ops = {'sc': op, 'sc2': op, 'stat': op}
+            ops = {'scaling_config': op, 'scaling_config2': op, 'stat': op}
         elif max_so == 2:
             if max_lvl == 0:
                 op = ['const', min_lvl] if min_lvl >= 80 else ['cap', 80]
@@ -600,11 +607,11 @@ if __name__ == '__main__':
                 op = ['cap_add_floor', 80, max_lvl, min_lvl] if min_lvl > 80 else ['cap_add', 80, max_lvl]
             else:
                 op = ['cap_add', 80, max_lvl] if min_so == 2 else None
-            ops = {'sc': op, 'sc2': op, 'stat': op}
+            ops = {'scaling_config': op, 'scaling_config2': op, 'stat': op}
         elif max_so == 1:
             ops = {
-                'sc': ['clamp', min_lvl, max_lvl],
-                'sc2': ['cap', max_lvl + 1],
+                'scaling_config': ['clamp', min_lvl, max_lvl],
+                'scaling_config2': ['cap', max_lvl + 1],
                 'stat': ['cap', max_lvl + 1],
             }
         else:
@@ -616,7 +623,7 @@ if __name__ == '__main__':
                 stat_op = ['const', min_lvl]
             else:
                 stat_op = ['clamp', min_with_offset, max_lvl]
-            # sc group
+            # scaling_config group
             if has_flag_4:
                 sc_op = None
             elif max_lvl > 0:
@@ -625,7 +632,7 @@ if __name__ == '__main__':
                 sc_op = ['cap', 80]
             else:
                 sc_op = None
-            # sc2 group
+            # scaling_config2 group
             if is_df:
                 sc2_op = None
             elif max_lvl == 0:
@@ -634,7 +641,7 @@ if __name__ == '__main__':
                 sc2_op = None
             else:
                 sc2_op = ['clamp', min_with_offset, max_lvl]
-            ops = {'sc': sc_op, 'sc2': sc2_op, 'stat': stat_op}
+            ops = {'scaling_config': sc_op, 'scaling_config2': sc2_op, 'stat': stat_op}
 
         # Normalize clamp(x,x) → const(x)
         for k, v in ops.items():
@@ -651,9 +658,9 @@ if __name__ == '__main__':
         for redirect in redirects:
             target_ops = content_tuning.get(str(redirect.RedirectContentTuningID), {})
             if redirect.RedirectEnum == 7:
-                keys = ('sc', 'sc2', 'stat')
+                keys = ('scaling_config', 'scaling_config2', 'stat')
             elif redirect.RedirectEnum == 14:
-                keys = ('sc', 'sc2')
+                keys = ('scaling_config', 'scaling_config2')
             else:
                 continue
             parent_key = str(parent_id)
@@ -671,7 +678,7 @@ if __name__ == '__main__':
 
     # Compact content tuning: use 'op' as default when all three keys are present
     for ct_id, ct_data in list(content_tuning.items()):
-        if set(ct_data.keys()) != {'sc', 'sc2', 'stat'}:
+        if set(ct_data.keys()) != {'scaling_config', 'scaling_config2', 'stat'}:
             continue
         values = list(ct_data.values())
         # Find the most common value to use as default
@@ -702,10 +709,10 @@ if __name__ == '__main__':
             if 'redirect' in bonus:
                 continue
             for b in [bonus] + ([bonus['other']] if isinstance(bonus.get('other'), dict) else []):
-                if 'ct_id' in b:
-                    ct_str = str(b['ct_id'])
+                if 'content_tuning_id' in b:
+                    ct_str = str(b['content_tuning_id'])
                     if ct_str in ct_remap:
-                        b['ct_id'] = int(ct_remap[ct_str])
+                        b['content_tuning_id'] = int(ct_remap[ct_str])
 
         # Remove non-canonical entries
         for ct_id in ct_remap:
@@ -727,7 +734,7 @@ if __name__ == '__main__':
         "content_tuning": content_tuning,
     }
     if ct_remap_int:
-        addon_data["ct_remap"] = ct_remap_int
+        addon_data["content_tuning_remap"] = ct_remap_int
 
     output_path = os.path.join('.cache', build, 'addon_data.json')
     with open(output_path, 'w') as f:
