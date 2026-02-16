@@ -326,11 +326,8 @@ def _write_lua(addon_data, path, crlf=False):
                     lines.append(f'midnightItems[{midnight[k]}] = true')
             i = j
 
-    # Bonus string precomputed lookup tables
-    lines.append(f'local levelToBonusId = {_lua_value(addon_data["level_to_bonus_id"])}')
-    lines.append(f'local setLevelBonuses = {_lua_value(addon_data["set_level_bonuses"])}')
-    lines.append(f'local addBonuses = {_lua_value(addon_data["add_bonuses"])}')
-    lines.append(f'local curveBonuses = {_lua_value(addon_data["curve_bonuses"])}')
+    # Bonus string precomputed lookup table
+    lines.append(f'local levelToBonusString = {_lua_value(addon_data["level_to_bonus_string"])}')
 
     # Pass data to LibBonusId
     lines.append('Lib.LoadData({')
@@ -344,10 +341,7 @@ def _write_lua(addon_data, path, crlf=False):
     lines.append('\tcontentTuning = contentTuning,')
     lines.append('\titems = items,')
     lines.append('\tmidnightItems = midnightItems,')
-    lines.append('\tlevelToBonusId = levelToBonusId,')
-    lines.append('\tsetLevelBonuses = setLevelBonuses,')
-    lines.append('\taddBonuses = addBonuses,')
-    lines.append('\tcurveBonuses = curveBonuses,')
+    lines.append('\tlevelToBonusString = levelToBonusString,')
     lines.append('})')
 
     newline = '\r\n' if crlf else '\n'
@@ -403,10 +397,7 @@ def _to_cbor_data(addon_data):
         'contentTuning': content_tuning,
         'items': items,
         'midnightItems': midnight,
-        'levelToBonusId': {int(k): v for k, v in addon_data['level_to_bonus_id'].items()},
-        'setLevelBonuses': {int(k): v for k, v in addon_data['set_level_bonuses'].items()},
-        'addBonuses': addon_data['add_bonuses'],
-        'curveBonuses': addon_data['curve_bonuses'],
+        'levelToBonusString': {int(k): v for k, v in addon_data['level_to_bonus_string'].items()},
     }
 
 
@@ -913,7 +904,7 @@ if __name__ == '__main__':
     logging.info("Item data: %d items, %d midnight items",
                  len(item_levels), len(midnight_items))
 
-    # Precompute bonus string lookup tables for GetBonusStringForLevel
+    # Precompute bonus string lookup table for GetBonusStringForLevel
     squish_curve_points = curves[squish_curve_index]
     squish_max = int(max(float(k) for k in squish_curve_points))
 
@@ -922,47 +913,150 @@ if __name__ == '__main__':
             return 1
         return _interpolate_exported_curve(squish_curve_points, value)
 
-    level_to_bonus_id = {}
-    set_level_bonuses = {}
-    add_bonuses = []
-    curve_bonuses = []
+    # Classify bonus ID side effects for filtering
+    _CLEAN_SIDE_EFFECTS = {
+        ItemBonusType.NONE, ItemBonusType.GROUP_ID, ItemBonusType.RECEIVE_TOAST,
+        ItemBonusType.REQ_LEVEL_CURVE, ItemBonusType.SET_APPEARANCE_MODIFIER,
+        ItemBonusType.MULTIPLY_REPAIR_COST, ItemBonusType.DISENCHANT_LOOT,
+        ItemBonusType.CAN_DISENCHANT, ItemBonusType.SET_BIND_TYPE,
+        ItemBonusType.PVP_ITEM_LEVEL, ItemBonusType.BONDING_WITH_PRIORITY,
+        ItemBonusType.INCREASE_BONUS_STAT, ItemBonusType.ITEM_EFFECT_ID,
+        ItemBonusType.ITEM_LIMIT_CATEGORY_ID, ItemBonusType.SCRAPPING_LOOT_ID,
+    }
+    _FALLBACK_SIDE_EFFECTS = _CLEAN_SIDE_EFFECTS | {ItemBonusType.SET_ITEM_QUALITY}
+
+    _ILEVEL_TYPES = {
+        ItemBonusType.INCREASE_ITEM_LEVEL, ItemBonusType.SCALING_CONFIG,
+        ItemBonusType.SCALING_CONFIG_2, ItemBonusType.OFFSET_CURVE,
+        ItemBonusType.MIDNIGHT_ITEM_LEVEL, ItemBonusType.BASE_ITEM_LEVEL,
+        ItemBonusType.CRAFTING_QUALITY, ItemBonusType.STAT_SCALING,
+        ItemBonusType.STAT_FIXED, ItemBonusType.APPLY_BONUS,
+    }
+
+    def _get_side_effects(bid):
+        entries = dbc.item_bonus.get(bid)
+        if not entries:
+            return set()
+        return {e.bonus_type for e in entries if e.bonus_type not in _ILEVEL_TYPES}
+
+    def _is_clean(bid):
+        return _get_side_effects(bid) <= _CLEAN_SIDE_EFFECTS
+
+    def _is_fallback(bid):
+        return _get_side_effects(bid) <= _FALLBACK_SIDE_EFFECTS
+
+    # Simulate the bonus algorithm for a (set + optional add) combo to verify
+    # it produces the expected level regardless of item midnight status.
+    def _simulate_combo(set_bonus, add_bonus, target_level):
+        """Returns True if the combo produces target_level for both midnight and non-midnight items."""
+        for has_midnight in (False, True):
+            il = set_bonus['item_level']
+            ms = has_midnight
+            # Post-set midnight handling
+            midnight_op = set_bonus.get('midnight')
+            if midnight_op == 'set':
+                ms = True
+            elif midnight_op == 'squish' and ms:
+                il = _get_squish_value(il)
+
+            if add_bonus:
+                add_midnight = add_bonus.get('midnight')
+                if add_midnight == 'force' and not ms:
+                    ms = True
+                    il = _get_squish_value(il)
+                il += add_bonus['amount']
+                if add_midnight == 'set':
+                    ms = True
+                elif add_midnight == 'squish' and ms:
+                    il = _get_squish_value(il)
+
+            il = max(il, 1)
+            if not ms:
+                il = _get_squish_value(il)
+            if il != target_level:
+                return False
+        return True
+
+    # Collect candidates: direct (single bonus ID) and combo (add + set)
+    # Each maps effective_level -> [(bonus_string, is_clean), ...]
+    direct_candidates = {}  # level -> [(string, clean)]
+    set_bonuses_by_level = {}  # level -> [(bid, bonus, clean)]
+    add_ops = []  # [(bid, bonus, clean)]
 
     for bid in sorted((int(k) for k in bonuses), key=int):
         bonus = bonuses[str(bid)]
         if 'redirect' in bonus:
             continue
         op = bonus.get('op')
+        clean = _is_clean(bid)
+        fallback = clean or _is_fallback(bid)
+        if not fallback:
+            continue
+
         if op == 'set':
             item_level = bonus['item_level']
-            if bonus.get('midnight') == 'set':
-                effective = item_level
-            else:
-                effective = _get_squish_value(item_level)
-            if effective not in level_to_bonus_id:
-                level_to_bonus_id[effective] = bid
-            if effective not in set_level_bonuses:
-                set_level_bonuses[effective] = bid
+            effective = item_level if bonus.get('midnight') == 'set' else _get_squish_value(item_level)
+            # Verify direct match works for both midnight/non-midnight items
+            if _simulate_combo(bonus, None, effective):
+                direct_candidates.setdefault(effective, []).append(
+                    (f"1:{bid}", clean))
+            set_bonuses_by_level.setdefault(effective, []).append((bid, bonus, clean))
         elif op == 'add':
-            add_bonuses.append(bid)
-            add_bonuses.append(bonus['amount'])
+            add_ops.append((bid, bonus, clean))
         elif op == 'scale':
             default_level = bonus.get('default_level')
             if default_level is not None:
                 curve_idx = bonus['curve_id']
-                fixed_level = _interpolate_exported_curve(curves[curve_idx], default_level) \
+                raw_level = _interpolate_exported_curve(curves[curve_idx], default_level) \
                     + bonus.get('offset', 0) + bonus.get('extra_amount', 0)
-                if fixed_level not in level_to_bonus_id:
-                    level_to_bonus_id[fixed_level] = bid
-            else:
-                curve_idx = bonus['curve_id']
-                offset = bonus.get('offset', 0) + bonus.get('extra_amount', 0)
-                curve_bonuses.append(bid)
-                curve_bonuses.append(curve_idx)
-                curve_bonuses.append(offset)
+                midnight = bonus.get('midnight')
+                if midnight == 'set':
+                    effective = raw_level
+                else:
+                    effective = _get_squish_value(raw_level)
+                # Create a synthetic set-like entry for simulation/combo matching
+                synthetic = {'item_level': raw_level, 'midnight': midnight}
+                if _simulate_combo(synthetic, None, effective):
+                    direct_candidates.setdefault(effective, []).append(
+                        (f"1:{bid}", clean))
+                set_bonuses_by_level.setdefault(effective, []).append((bid, synthetic, clean))
 
-    logging.info("Bonus string data: %d direct levels, %d set levels, %d add entries, %d curve entries",
-                 len(level_to_bonus_id), len(set_level_bonuses),
-                 len(add_bonuses) // 2, len(curve_bonuses) // 3)
+    # Build combo candidates (set must have lower bid than add so set runs first)
+    combo_candidates = {}  # level -> [(string, clean)]
+    for add_bid, add_bonus, add_clean in add_ops:
+        for base_level, set_entries in set_bonuses_by_level.items():
+            for set_bid, set_bonus, set_clean in set_entries:
+                if set_bid >= add_bid:
+                    continue
+                target = base_level + add_bonus['amount']
+                if not _simulate_combo(set_bonus, add_bonus, target):
+                    continue
+                combo_clean = add_clean and set_clean
+                combo_candidates.setdefault(target, []).append(
+                    (f"2:{set_bid}:{add_bid}", combo_clean))
+
+    # Build final level_to_bonus_string: prefer clean, fall back to SET_ITEM_QUALITY
+    level_to_bonus_string = {}
+    for level in range(1, 171):
+        candidates = direct_candidates.get(level, []) + combo_candidates.get(level, [])
+        # Prefer clean candidates
+        clean = [s for s, c in candidates if c]
+        if clean:
+            level_to_bonus_string[level] = clean[0]
+            continue
+        # Fall back to any candidate
+        fallback = [s for s, _ in candidates]
+        if fallback:
+            level_to_bonus_string[level] = fallback[0]
+
+    logging.info("Bonus string data: %d/%d levels covered (%d clean, %d fallback)",
+                 len(level_to_bonus_string), 170,
+                 sum(1 for l in level_to_bonus_string
+                     if any(c for s, c in direct_candidates.get(l, []) + combo_candidates.get(l, [])
+                            if s == level_to_bonus_string[l])),
+                 sum(1 for l in level_to_bonus_string
+                     if not any(c for s, c in direct_candidates.get(l, []) + combo_candidates.get(l, [])
+                                if s == level_to_bonus_string[l])))
 
     # Assemble and write
     addon_data = {
@@ -974,10 +1068,7 @@ if __name__ == '__main__':
         "content_tuning": content_tuning,
         "item_levels": item_levels,
         "midnight_items": midnight_items,
-        "level_to_bonus_id": level_to_bonus_id,
-        "set_level_bonuses": set_level_bonuses,
-        "add_bonuses": add_bonuses,
-        "curve_bonuses": curve_bonuses,
+        "level_to_bonus_string": level_to_bonus_string,
     }
     if ct_remap_int:
         addon_data["content_tuning_remap"] = ct_remap_int
