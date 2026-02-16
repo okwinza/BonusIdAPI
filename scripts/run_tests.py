@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import subprocess
-from typing import Self
+from typing import Optional, Self
 
 from lib.algorithm import Algorithm
 from lib.addon_data_algorithm import AddonDataAlgorithm
@@ -82,6 +82,15 @@ class LuaAlgorithm(Algorithm):
         self._proc.stdin.flush()
         return int(self._proc.stdout.readline().strip())
 
+    def bonus_string_round_trip(self, link: str) -> tuple[int, Optional[str], Optional[int]]:
+        self._proc.stdin.write(f"BONUS_RT:{link}\n")
+        self._proc.stdin.flush()
+        parts = self._proc.stdout.readline().strip().split("\t")
+        item_level = int(parts[0])
+        if parts[1] == "NIL":
+            return item_level, None, None
+        return item_level, parts[1], int(parts[2])
+
     def close(self):
         self._proc.stdin.close()
         self._proc.wait()
@@ -107,6 +116,7 @@ class Test:
             logging.info("Testing Lua algorithm...")
             lua_algorithm = LuaAlgorithm(self._build)
             self._test_algorithm(lua_algorithm)
+            self._test_bonus_string(lua_algorithm)
             lua_algorithm.close()
 
     def _test_algorithm(self, algorithm: Algorithm):
@@ -137,6 +147,15 @@ class Test:
             item_level = algorithm.process_item(data.link)
             if item_level != data.expected:
                 logging.error("link='%s', itemLevel=%d, expected=%d", data.link, item_level, data.expected)
+
+    def _test_bonus_string(self, lua_algorithm: LuaAlgorithm):
+        logging.info("Checking bonus string round-trip...")
+        for data in GameTestLink.from_file("links.txt"):
+            item_level, bonus_string, rt_level = lua_algorithm.bonus_string_round_trip(data.link)
+            if bonus_string is None:
+                logging.error("GetBonusStringForLevel(%d) returned nil, link='%s'", item_level, data.link)
+            elif rt_level != item_level:
+                logging.error("bonusString=%s, level=%d, got=%d, link='%s'", bonus_string, item_level, rt_level, data.link)
 
 
 if __name__ == '__main__':

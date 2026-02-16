@@ -326,6 +326,12 @@ def _write_lua(addon_data, path, crlf=False):
                     lines.append(f'midnightItems[{midnight[k]}] = true')
             i = j
 
+    # Bonus string precomputed lookup tables
+    lines.append(f'local levelToBonusId = {_lua_value(addon_data["level_to_bonus_id"])}')
+    lines.append(f'local setLevelBonuses = {_lua_value(addon_data["set_level_bonuses"])}')
+    lines.append(f'local addBonuses = {_lua_value(addon_data["add_bonuses"])}')
+    lines.append(f'local curveBonuses = {_lua_value(addon_data["curve_bonuses"])}')
+
     # Pass data to LibBonusId
     lines.append('Lib.LoadData({')
     lines.append('\tversion = DATA_VERSION,')
@@ -338,6 +344,10 @@ def _write_lua(addon_data, path, crlf=False):
     lines.append('\tcontentTuning = contentTuning,')
     lines.append('\titems = items,')
     lines.append('\tmidnightItems = midnightItems,')
+    lines.append('\tlevelToBonusId = levelToBonusId,')
+    lines.append('\tsetLevelBonuses = setLevelBonuses,')
+    lines.append('\taddBonuses = addBonuses,')
+    lines.append('\tcurveBonuses = curveBonuses,')
     lines.append('})')
 
     newline = '\r\n' if crlf else '\n'
@@ -393,6 +403,10 @@ def _to_cbor_data(addon_data):
         'contentTuning': content_tuning,
         'items': items,
         'midnightItems': midnight,
+        'levelToBonusId': {int(k): v for k, v in addon_data['level_to_bonus_id'].items()},
+        'setLevelBonuses': {int(k): v for k, v in addon_data['set_level_bonuses'].items()},
+        'addBonuses': addon_data['add_bonuses'],
+        'curveBonuses': addon_data['curve_bonuses'],
     }
 
 
@@ -435,6 +449,26 @@ def _sort_priority(bonus_type):
 
 
 _OP_GROUP = {'scale': 'S', 'set': 'S', 'add': 'Q'}
+
+
+def _interpolate_exported_curve(points, value):
+    """Evaluate an exported curve dict ({str_key: number, ...}) at a value.
+    Same interpolation logic as the Lua Interpolate function."""
+    numeric = {float(k): v for k, v in points.items()}
+    lower_bound, upper_bound = -float('inf'), float('inf')
+    for level, item_level in numeric.items():
+        if level == value:
+            return int(floor(item_level + 0.5))
+        elif level < value:
+            lower_bound = max(lower_bound, level)
+        else:
+            upper_bound = min(upper_bound, level)
+    if lower_bound == -float('inf'):
+        return int(floor(numeric[upper_bound] + 0.5))
+    if upper_bound == float('inf'):
+        return int(floor(numeric[lower_bound] + 0.5))
+    result = numeric[lower_bound] + (value - lower_bound) / (upper_bound - lower_bound) * (numeric[upper_bound] - numeric[lower_bound])
+    return int(floor(result + 0.5))
 
 
 def _get_curve_point_value(dbc, curve_id, value):
@@ -879,16 +913,71 @@ if __name__ == '__main__':
     logging.info("Item data: %d items, %d midnight items",
                  len(item_levels), len(midnight_items))
 
+    # Precompute bonus string lookup tables for GetBonusStringForLevel
+    squish_curve_points = curves[squish_curve_index]
+    squish_max = int(max(float(k) for k in squish_curve_points))
+
+    def _get_squish_value(value):
+        if value > squish_max:
+            return 1
+        return _interpolate_exported_curve(squish_curve_points, value)
+
+    level_to_bonus_id = {}
+    set_level_bonuses = {}
+    add_bonuses = []
+    curve_bonuses = []
+
+    for bid in sorted((int(k) for k in bonuses), key=int):
+        bonus = bonuses[str(bid)]
+        if 'redirect' in bonus:
+            continue
+        op = bonus.get('op')
+        if op == 'set':
+            item_level = bonus['item_level']
+            if bonus.get('midnight') == 'set':
+                effective = item_level
+            else:
+                effective = _get_squish_value(item_level)
+            if effective not in level_to_bonus_id:
+                level_to_bonus_id[effective] = bid
+            if effective not in set_level_bonuses:
+                set_level_bonuses[effective] = bid
+        elif op == 'add':
+            add_bonuses.append(bid)
+            add_bonuses.append(bonus['amount'])
+        elif op == 'scale':
+            default_level = bonus.get('default_level')
+            if default_level is not None:
+                curve_idx = bonus['curve_id']
+                fixed_level = _interpolate_exported_curve(curves[curve_idx], default_level) \
+                    + bonus.get('offset', 0) + bonus.get('extra_amount', 0)
+                if fixed_level not in level_to_bonus_id:
+                    level_to_bonus_id[fixed_level] = bid
+            else:
+                curve_idx = bonus['curve_id']
+                offset = bonus.get('offset', 0) + bonus.get('extra_amount', 0)
+                curve_bonuses.append(bid)
+                curve_bonuses.append(curve_idx)
+                curve_bonuses.append(offset)
+
+    logging.info("Bonus string data: %d direct levels, %d set levels, %d add entries, %d curve entries",
+                 len(level_to_bonus_id), len(set_level_bonuses),
+                 len(add_bonuses) // 2, len(curve_bonuses) // 3)
+
     # Assemble and write
     addon_data = {
         "build": build,
         "squish_curve": squish_curve_index,
-        "squish_max": int(max(float(k) for k in curves[squish_curve_index])),
+        "squish_max": squish_max,
         "bonuses": bonuses,
         "curves": curves,
         "content_tuning": content_tuning,
         "item_levels": item_levels,
         "midnight_items": midnight_items,
+        "level_to_bonus_id": level_to_bonus_id,
+        "set_level_bonuses": set_level_bonuses,
+        "add_bonuses": add_bonuses,
+        "curve_bonuses": curve_bonuses,
     }
     if ct_remap_int:
         addon_data["content_tuning_remap"] = ct_remap_int
