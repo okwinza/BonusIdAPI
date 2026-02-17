@@ -24,7 +24,7 @@ python bonus_id_tool.py generate [build]
 Fetches DBC data for the given build, computes all bonus ID effects, and writes:
 - `.cache/<build>/addon_data.json` — full addon data as JSON
 - `.cache/<build>/addon_data.lua` — Lua table format
-- `../LibBonusId/Data.lua` — CBOR-encoded Lua for the addon
+- `../LibBonusId/Data.lua` — CBOR-encoded Lua for the addon (only if `../LibBonusId/` exists)
 
 ### Run tests
 

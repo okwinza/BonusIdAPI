@@ -701,10 +701,14 @@ class AddonDataGenerator:
         lua_cache_path = os.path.join('.cache', build, 'addon_data.lua')
         write_lua(addon_data, lua_cache_path)
 
-        lua_addon_path = os.path.join('..', 'LibBonusId', 'Data.lua')
-        write_lua_cbor(addon_data, lua_addon_path, crlf=True)
+        paths = [json_path, lua_cache_path]
 
-        paths = [json_path, lua_cache_path, lua_addon_path]
+        lua_addon_path = os.path.join('..', 'LibBonusId', 'Data.lua')
+        if os.path.isdir(os.path.dirname(lua_addon_path)):
+            write_lua_cbor(addon_data, lua_addon_path, crlf=True)
+            paths.append(lua_addon_path)
+        else:
+            logging.info("Skipping %s (directory not found)", lua_addon_path)
         logging.info("Wrote addon data to %s", ', '.join(paths))
         return paths
 
