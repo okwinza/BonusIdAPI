@@ -70,16 +70,16 @@ def main():
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     p_generate = subparsers.add_parser('generate', help='Generate addon data (JSON + Lua) from DBC files')
-    p_generate.add_argument('build', help='Game build version (e.g. 12.0.1.65893)')
+    p_generate.add_argument('build', nargs='?', default='latest', help='Game build version (default: latest)')
     p_generate.set_defaults(func=cmd_generate)
 
     p_test = subparsers.add_parser('test', help='Run tests comparing algorithm output against game data')
-    p_test.add_argument('build', help='Game build version (e.g. 12.0.1.65893)')
+    p_test.add_argument('build', nargs='?', default='latest', help='Game build version (default: latest)')
     p_test.add_argument('-a', '--algorithm', choices=['dbc', 'addon', 'lua', 'all'], default='all', help='Which algorithm to test (default: all)')
     p_test.set_defaults(func=cmd_test)
 
     p_calc = subparsers.add_parser('calc', help='Calculate item level from WoW item link(s) or item info')
-    p_calc.add_argument('build', help='Game build version (e.g. 12.0.1.65893)')
+    p_calc.add_argument('build', nargs='?', default='latest', help='Game build version (default: latest)')
     p_calc.add_argument('links', nargs='*', help='WoW item link(s)')
     p_calc.add_argument('-i', '--item-id', type=int, help='Item ID (use instead of links)')
     p_calc.add_argument('-b', '--bonus-ids', type=lambda s: [int(x) for x in s.split(',')], default=[], help='Comma-separated bonus IDs (e.g. 1234,5678)')

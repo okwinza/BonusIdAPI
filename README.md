@@ -13,12 +13,12 @@ WoW item levels are determined by a complex system of bonus IDs, scaling configs
 
 ## Usage
 
-All commands accept a build version string (e.g. `12.0.1.65867`) or `latest` to auto-fetch the current retail build from [wago.tools](https://wago.tools).
+All commands default to the latest retail build from [wago.tools](https://wago.tools). You can also pass a specific build version (e.g. `12.0.1.65867`).
 
 ### Generate addon data
 
 ```bash
-python bonus_id_tool.py generate <build>
+python bonus_id_tool.py generate [build]
 ```
 
 Fetches DBC data for the given build, computes all bonus ID effects, and writes:
@@ -29,15 +29,15 @@ Fetches DBC data for the given build, computes all bonus ID effects, and writes:
 ### Run tests
 
 ```bash
-python bonus_id_tool.py test <build>
+python bonus_id_tool.py test [build]
 ```
 
 Tests the algorithm against game-extracted data in `test/data/`. Supports testing individual algorithm implementations:
 
 ```bash
-python bonus_id_tool.py test <build> -a dbc    # Direct DBC algorithm only
-python bonus_id_tool.py test <build> -a addon  # Addon data algorithm only
-python bonus_id_tool.py test <build> -a lua    # Lua algorithm only
+python bonus_id_tool.py test [build] -a dbc    # Direct DBC algorithm only
+python bonus_id_tool.py test [build] -a addon  # Addon data algorithm only
+python bonus_id_tool.py test [build] -a lua    # Lua algorithm only
 ```
 
 ### Calculate item level
@@ -45,13 +45,13 @@ python bonus_id_tool.py test <build> -a lua    # Lua algorithm only
 From a WoW item link:
 
 ```bash
-python bonus_id_tool.py calc <build> "|cnIQ4:|Hitem:60211::::::::61:259::5:1:9052:2:9:35:28:2660:::::|h[Bracers of the Dark Pool]|h|r"
+python bonus_id_tool.py calc [build] "|cnIQ4:|Hitem:60211::::::::61:259::5:1:9052:2:9:35:28:2660:::::|h[Bracers of the Dark Pool]|h|r"
 ```
 
 From separated item info (item ID, bonus IDs, and modifiers):
 
 ```bash
-python bonus_id_tool.py calc <build> -i 60211 -b 9052 -p 35 -c 2660
+python bonus_id_tool.py calc [build] -i 60211 -b 9052 -p 35 -c 2660
 ```
 
 Options:
