@@ -3,6 +3,21 @@
 import argparse
 import logging
 
+import requests
+
+
+def resolve_build(build: str) -> str:
+    """Resolve 'latest' to the actual build version from wago.tools."""
+    if build.lower() != 'latest':
+        return build
+    logging.info("Fetching latest build from wago.tools...")
+    res = requests.get("https://wago.tools/api/builds")
+    res.raise_for_status()
+    builds = res.json()["wow"]
+    latest = builds[0]["version"]
+    logging.info("Latest build: %s", latest)
+    return latest
+
 
 def cmd_generate(args):
     """Generate addon data (JSON + Lua) from DBC files."""
@@ -80,6 +95,9 @@ def main():
         format='%(asctime)s.%(msecs)03d %(levelname)s [%(module)s:%(lineno)d] %(message)s',
         datefmt='%H:%M:%S',
     )
+
+    if hasattr(args, 'build'):
+        args.build = resolve_build(args.build)
 
     args.func(args)
 

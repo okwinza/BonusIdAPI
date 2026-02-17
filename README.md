@@ -13,13 +13,15 @@ WoW item levels are determined by a complex system of bonus IDs, scaling configs
 
 ## Usage
 
+All commands accept a build version string (e.g. `12.0.1.65867`) or `latest` to auto-fetch the current retail build from [wago.tools](https://wago.tools).
+
 ### Generate addon data
 
 ```bash
 python bonus_id_tool.py generate <build>
 ```
 
-Fetches DBC data for the given build (e.g. `12.0.1.65867`), computes all bonus ID effects, and writes:
+Fetches DBC data for the given build, computes all bonus ID effects, and writes:
 - `.cache/<build>/addon_data.json` — full addon data as JSON
 - `.cache/<build>/addon_data.lua` — Lua table format
 - `../LibBonusId/Data.lua` — CBOR-encoded Lua for the addon
