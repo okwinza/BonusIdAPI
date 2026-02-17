@@ -87,6 +87,10 @@ Options:
 - `requests` (for fetching DBC data)
 - `lua` (for running Lua algorithm tests)
 
+## Related
+
+- [LibBonusId](https://github.com/TradeSkillMaster/LibBonusId) — WoW addon library that consumes the generated addon data to compute item levels client-side
+
 ## License
 
 MIT — see [LICENSE.txt](LICENSE.txt).
