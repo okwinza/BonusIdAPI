@@ -1,214 +1,17 @@
 #!/usr/bin/env python3
 
-import base64
 import json
 import logging
 import os
 import sys
-import zlib
 from math import floor
+from typing import Any
 
-import cbor2
-
-from lib.dbc_file import CurveType, DBC, ItemBonusType
-
-ADDON_DATA_VERSION = 1
-
-_LUA_KEYWORDS = frozenset({
-    'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for',
-    'function', 'goto', 'if', 'in', 'local', 'nil', 'not', 'or',
-    'repeat', 'return', 'then', 'true', 'until', 'while',
-})
+from lib.dbc_file import CurveType, DBC, ItemBonus, ItemBonusType
+from lib.lua_writer import write_lua, write_lua_cbor
 
 
-def _snake_to_camel(s):
-    """Convert snake_case to camelCase."""
-    parts = s.split('_')
-    return parts[0] + ''.join(p.capitalize() for p in parts[1:])
-
-
-def _lua_key(k):
-    """Format a Python dict key as a Lua table key."""
-    if isinstance(k, int):
-        return f'[{k}]'
-    if isinstance(k, str):
-        # Numeric string keys → number keys
-        try:
-            return f'[{int(k)}]'
-        except ValueError:
-            try:
-                return f'[{float(k)}]'
-            except ValueError:
-                pass
-        camel = _snake_to_camel(k)
-        if camel.isidentifier() and camel not in _LUA_KEYWORDS:
-            return camel
-    return f'["{k}"]'
-
-
-def _lua_value(val):
-    """Serialize a Python value to compact inline Lua."""
-    if isinstance(val, bool):
-        return 'true' if val else 'false'
-    if isinstance(val, int):
-        return str(val)
-    if isinstance(val, float):
-        return str(int(val)) if val == int(val) else str(val)
-    if isinstance(val, str):
-        return f'"{_snake_to_camel(val)}"'
-    if isinstance(val, list):
-        return '{' + ', '.join(_lua_value(v) for v in val) + '}'
-    if isinstance(val, dict):
-        parts = []
-        for k, v in val.items():
-            lk = _lua_key(k)
-            lv = _lua_value(v)
-            if lk.startswith('['):
-                parts.append(f'{lk}={lv}')
-            else:
-                parts.append(f'{lk}={lv}')
-        return '{' + ', '.join(parts) + '}'
-    raise TypeError(f"Cannot serialize {type(val)} to Lua")
-
-
-def _find_diffs(a, b, path=()):
-    """Find leaf-level differences between two nested structures."""
-    if type(a) != type(b):
-        return [(path, a, b)]
-    if isinstance(a, dict):
-        if set(a.keys()) != set(b.keys()):
-            return [(path, a, b)]
-        diffs = []
-        for k in sorted(a.keys()):
-            diffs.extend(_find_diffs(a[k], b[k], path + (k,)))
-        return diffs
-    if isinstance(a, list):
-        if len(a) != len(b):
-            return [(path, a, b)]
-        diffs = []
-        for i in range(len(a)):
-            diffs.extend(_find_diffs(a[i], b[i], path + (i,)))
-        return diffs
-    if a != b:
-        return [(path, a, b)]
-    return []
-
-
-def _lua_expr(slope, intercept):
-    """Format slope*i + intercept as a Lua expression."""
-    if slope == 1:
-        if intercept == 0:
-            return 'i'
-        return f'i+{intercept}' if intercept > 0 else f'i-{-intercept}'
-    if slope == -1:
-        return f'{intercept}-i' if intercept != 0 else '-i'
-    base = f'{slope}*i'
-    if intercept == 0:
-        return base
-    return f'{base}+{intercept}' if intercept > 0 else f'{base}-{-intercept}'
-
-
-def _lua_value_with_subs(val, subs, path=()):
-    """Serialize a value to Lua, substituting linear expressions at given paths."""
-    if path in subs:
-        return _lua_expr(*subs[path])
-    if isinstance(val, bool):
-        return 'true' if val else 'false'
-    if isinstance(val, int):
-        return str(val)
-    if isinstance(val, float):
-        return str(int(val)) if val == int(val) else str(val)
-    if isinstance(val, str):
-        return f'"{_snake_to_camel(val)}"'
-    if isinstance(val, list):
-        return '{' + ', '.join(_lua_value_with_subs(v, subs, path + (i,)) for i, v in enumerate(val)) + '}'
-    if isinstance(val, dict):
-        parts = []
-        for k, v in val.items():
-            lk = _lua_key(k)
-            lv = _lua_value_with_subs(v, subs, path + (k,))
-            parts.append(f'{lk}={lv}')
-        return '{' + ', '.join(parts) + '}'
-    raise TypeError(f"Cannot serialize {type(val)} to Lua")
-
-
-def _is_numeric(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
-
-
-def _find_runs(entries, min_run=3):
-    """Find compressible runs in sorted (int_id, value) pairs.
-
-    Returns list of segments:
-    - ('single', id, value)
-    - ('run', start_id, end_id, base_value, {path: (slope, intercept)})
-    """
-    segments = []
-    i = 0
-    n = len(entries)
-
-    while i < n:
-        bid_start, val_start = entries[i]
-        j = i + 1
-        varying = None
-
-        while j < n:
-            bid_cur, val_cur = entries[j]
-            if bid_cur != bid_start + (j - i):
-                break
-
-            diffs = _find_diffs(val_start, val_cur)
-
-            if j == i + 1:
-                # First pair — establish pattern
-                if not all(_is_numeric(d[1]) and _is_numeric(d[2]) for d in diffs):
-                    break
-                varying = {}
-                ok = True
-                for p, v1, v2 in diffs:
-                    slope = v2 - v1
-                    if slope != int(slope):
-                        ok = False
-                        break
-                    slope = int(slope)
-                    intercept = v1 - slope * bid_start
-                    if intercept != int(intercept):
-                        ok = False
-                        break
-                    varying[p] = (int(slope), int(intercept))
-                if not ok:
-                    varying = None
-                    break
-            else:
-                # Verify pattern holds
-                if len(diffs) != len(varying):
-                    break
-                ok = True
-                for p, _, v_cur in diffs:
-                    if p not in varying:
-                        ok = False
-                        break
-                    slope, intercept = varying[p]
-                    if v_cur != slope * bid_cur + intercept:
-                        ok = False
-                        break
-                if not ok:
-                    break
-            j += 1
-
-        run_len = j - i
-        if run_len >= min_run:
-            segments.append(('run', bid_start, bid_start + run_len - 1,
-                             val_start, varying or {}))
-            i = j
-        else:
-            segments.append(('single', entries[i][0], entries[i][1]))
-            i += 1
-
-    return segments
-
-
-def _build_item_data(dbc):
+def _build_item_data(dbc: DBC) -> tuple[dict[str, int], list[int]]:
     """Build per-item base level and midnight scaling data from ItemSparse.
 
     Returns:
@@ -227,207 +30,7 @@ def _build_item_data(dbc):
     return item_levels, midnight_items
 
 
-def _write_lua(addon_data, path, crlf=False):
-    """Write addon data as a Lua file with loop compression."""
-    lines = []
-
-    # Early-out if we shouldn't load this data
-    build = addon_data["build"]
-    lines.append(f'local DATA_VERSION = {ADDON_DATA_VERSION}')
-    lines.append(f'local BUILD = "{build}"')
-    lines.append('local Lib = LibStub("LibBonusId") ---@type LibBonusId')
-    lines.append('if not Lib.ShouldLoadData(DATA_VERSION, BUILD) then return end')
-
-    # Bonuses (compressed with loops)
-    sorted_bonus_ids = sorted(addon_data['bonuses'].keys(), key=int)
-    bonus_entries = [(int(k), addon_data['bonuses'][k]) for k in sorted_bonus_ids]
-    bonus_segments = _find_runs(bonus_entries)
-
-    lines.append('local bonuses = {}')
-    for seg in bonus_segments:
-        if seg[0] == 'single':
-            _, bid, val = seg
-            lines.append(f'bonuses[{bid}] = {_lua_value(val)}')
-        else:
-            _, start, end, base_val, varying = seg
-            template = _lua_value_with_subs(base_val, varying)
-            lines.append(f'for i = {start}, {end} do bonuses[i] = {template} end')
-
-    # Content tuning
-    lines.append('local contentTuning = {')
-    for k in sorted(addon_data['content_tuning'].keys(), key=int):
-        lines.append(f'\t[{k}] = {_lua_value(addon_data["content_tuning"][k])},')
-    lines.append('}')
-
-    # CT remap (inline assignments into contentTuning)
-    ct_remap = addon_data.get('content_tuning_remap', {})
-    if ct_remap:
-        sorted_ct_keys = sorted(ct_remap.keys())
-        ct_entries = [(int(k), ct_remap[k]) for k in sorted_ct_keys]
-        ct_segments = _find_runs(ct_entries)
-
-        for seg in ct_segments:
-            if seg[0] == 'single':
-                _, src, dst = seg
-                lines.append(f'contentTuning[{src}] = contentTuning[{dst}]')
-            else:
-                _, start, end, base_val, varying = seg
-                template = _lua_value_with_subs(base_val, varying)
-                lines.append(f'for i = {start}, {end} do contentTuning[i] = contentTuning[{template}] end')
-
-    # Curves
-    lines.append('local curves = {')
-    for curve in addon_data['curves']:
-        lines.append('\t' + _lua_value(curve) + ',')
-    lines.append('}')
-
-    squish_index = addon_data["squish_curve"]
-    lines.append(f'local squishCurve = curves[{squish_index + 1}]')
-    squish_max = max(float(k) for k in addon_data["curves"][squish_index])
-    squish_max_lua = int(squish_max) if squish_max == int(squish_max) else squish_max
-
-    # Item levels (compressed with loops via helper function to avoid Lua 5.1's
-    # SHRT_MAX limit on local variable registrations per chunk)
-    item_levels = addon_data.get('item_levels', {})
-    sorted_item_ids = sorted(item_levels.keys(), key=int)
-    item_entries = [(int(k), item_levels[k]) for k in sorted_item_ids]
-    item_segments = _find_runs(item_entries)
-
-    lines.append('local items = {}')
-    lines.append('local function SetItemRange(lo, hi, level) for i = lo, hi do items[i] = level end end')
-    for seg in item_segments:
-        if seg[0] == 'single':
-            _, iid, val = seg
-            lines.append(f'items[{iid}] = {_lua_value(val)}')
-        else:
-            _, start, end, base_val, varying = seg
-            template = _lua_value_with_subs(base_val, varying)
-            if varying:
-                # Linear pattern — must use inline for loop (i is the loop variable)
-                lines.append(f'for i = {start}, {end} do items[i] = {template} end')
-            else:
-                # Constant value — use helper to avoid local variable limit
-                lines.append(f'SetItemRange({start}, {end}, {template})')
-
-    # Midnight items (hash set with loop compression for consecutive IDs)
-    midnight = addon_data.get('midnight_items', [])
-    lines.append('local midnightItems = {}')
-    if midnight:
-        lines.append('local function SetMidnightRange(lo, hi) for i = lo, hi do midnightItems[i] = true end end')
-        i = 0
-        while i < len(midnight):
-            j = i + 1
-            while j < len(midnight) and midnight[j] == midnight[j - 1] + 1:
-                j += 1
-            if j - i >= 3:
-                lines.append(f'SetMidnightRange({midnight[i]}, {midnight[j - 1]})')
-            else:
-                for k in range(i, j):
-                    lines.append(f'midnightItems[{midnight[k]}] = true')
-            i = j
-
-    # Bonus string precomputed lookup table
-    lines.append(f'local levelToBonusString = {_lua_value(addon_data["level_to_bonus_string"])}')
-
-    # Pass data to LibBonusId
-    lines.append('Lib.LoadData({')
-    lines.append('\tversion = DATA_VERSION,')
-    lines.append('\tbuild = BUILD,')
-
-    lines.append(f'\tsquishMax = {squish_max_lua},')
-    lines.append('\tsquishCurve = squishCurve,')
-    lines.append('\tbonuses = bonuses,')
-    lines.append('\tcurves = curves,')
-    lines.append('\tcontentTuning = contentTuning,')
-    lines.append('\titems = items,')
-    lines.append('\tmidnightItems = midnightItems,')
-    lines.append('\tlevelToBonusString = levelToBonusString,')
-    lines.append('})')
-
-    newline = '\r\n' if crlf else '\n'
-    with open(path, 'w', newline='') as f:
-        f.write(newline.join(lines) + newline)
-
-
-def _to_cbor_data(addon_data):
-    """Convert addon_data dict to the Lua-compatible structure for CBOR serialization.
-
-    Converts snake_case keys/values to camelCase, string keys to numeric where possible,
-    and expands the content tuning remap table inline.
-    """
-    def convert_key(k):
-        try:
-            return int(k)
-        except ValueError:
-            try:
-                return float(k)
-            except ValueError:
-                return _snake_to_camel(k)
-
-    def convert(v):
-        if isinstance(v, dict):
-            return {convert_key(k) if isinstance(k, str) else k: convert(val) for k, val in v.items()}
-        if isinstance(v, list):
-            return [convert(x) for x in v]
-        if isinstance(v, str):
-            return _snake_to_camel(v)
-        return v
-
-    bonuses = {int(k): convert(v) for k, v in addon_data['bonuses'].items()}
-    curves = [convert(curve) for curve in addon_data['curves']]
-
-    # Content tuning with remap expansion (so no post-load fixup needed in Lua)
-    content_tuning = {int(k): convert(v) for k, v in addon_data['content_tuning'].items()}
-    for src, dst in addon_data.get('content_tuning_remap', {}).items():
-        dst_int = int(dst)
-        if dst_int in content_tuning:
-            content_tuning[int(src)] = content_tuning[dst_int]
-
-    items = {int(k): v for k, v in addon_data.get('item_levels', {}).items()}
-    midnight = {mid: True for mid in addon_data.get('midnight_items', [])}
-    squish_idx = addon_data['squish_curve']
-
-    return {
-        'version': ADDON_DATA_VERSION,
-        'build': addon_data['build'],
-        'squishMax': addon_data['squish_max'],
-        'squishCurve': curves[squish_idx],
-        'bonuses': bonuses,
-        'curves': curves,
-        'contentTuning': content_tuning,
-        'items': items,
-        'midnightItems': midnight,
-        'levelToBonusString': {int(k): v for k, v in addon_data['level_to_bonus_string'].items()},
-    }
-
-
-def _write_lua_cbor(addon_data, path, crlf=False):
-    """Write addon data as a CBOR-compressed Lua file using C_EncodingUtil APIs."""
-    cbor_data = _to_cbor_data(addon_data)
-    cbor_bytes = cbor2.dumps(cbor_data)
-    co = zlib.compressobj(1, zlib.DEFLATED, -15)
-    compressed = co.compress(cbor_bytes) + co.flush()
-    b64 = base64.b64encode(compressed).decode('ascii')
-
-    build = addon_data["build"]
-    lines = [
-        f'local DATA_VERSION = {ADDON_DATA_VERSION}',
-        f'local BUILD = "{build}"',
-        'local Lib = LibStub("LibBonusId") ---@type LibBonusId',
-        'if not Lib.ShouldLoadData(DATA_VERSION, BUILD) then return end',
-        f'local DATA = "{b64}"',
-        'Lib.LoadData(C_EncodingUtil.DeserializeCBOR(C_EncodingUtil.DecompressString(C_EncodingUtil.DecodeBase64(DATA))))',
-    ]
-
-    newline = '\r\n' if crlf else '\n'
-    with open(path, 'w', newline='') as f:
-        f.write(newline.join(lines) + newline)
-
-    logging.info("CBOR %s: %d bytes (cbor=%d, zlib=%d, base64=%d)",
-                 path, os.path.getsize(path), len(cbor_bytes), len(compressed), len(b64))
-
-
-def _sort_priority(bonus_type):
+def _sort_priority(bonus_type: ItemBonusType) -> int:
     if bonus_type in (ItemBonusType.STAT_SCALING, ItemBonusType.STAT_FIXED):
         return 1
     if bonus_type in (ItemBonusType.SCALING_CONFIG, ItemBonusType.SCALING_CONFIG_2):
@@ -439,10 +42,10 @@ def _sort_priority(bonus_type):
     return 0
 
 
-_OP_GROUP = {'scale': 'S', 'set': 'S', 'add': 'Q'}
+_OP_GROUP: dict[str, str] = {'scale': 'S', 'set': 'S', 'add': 'Q'}
 
 
-def _interpolate_exported_curve(points, value):
+def _interpolate_exported_curve(points: dict[str, int | float], value: int | float) -> int:
     """Evaluate an exported curve dict ({str_key: number, ...}) at a value.
     Same interpolation logic as the Lua Interpolate function."""
     numeric = {float(k): v for k, v in points.items()}
@@ -462,7 +65,7 @@ def _interpolate_exported_curve(points, value):
     return int(floor(result + 0.5))
 
 
-def _get_curve_point_value(dbc, curve_id, value):
+def _get_curve_point_value(dbc: DBC, curve_id: int, value: int) -> int:
     """Evaluate a curve at an integer value — same logic as DirectDBCAlgorithm."""
     lower_bound, upper_bound = dbc.curve_point.find_points(curve_id, value)
     if lower_bound.Pos_0 >= value:
@@ -475,7 +78,7 @@ def _get_curve_point_value(dbc, curve_id, value):
     return int(floor(result + 0.5))
 
 
-def _export_bonus(entry, dbc):
+def _export_bonus(entry: ItemBonus, dbc: DBC) -> dict[str, Any] | None:
     """Convert a DBC ItemBonus entry to an operation dict.
     Returns None for entries that have no effect on item level calculation."""
     bt = entry.bonus_type
@@ -565,7 +168,7 @@ def _export_bonus(entry, dbc):
         return None
 
 
-def _dedup_entries(entries):
+def _dedup_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep only the last entry per group. Ops without a group always kept."""
     seen = {}  # group -> index
     for i, entry in enumerate(entries):
@@ -576,12 +179,12 @@ def _dedup_entries(entries):
             if _OP_GROUP.get(e['op']) is None or seen[_OP_GROUP[e['op']]] == i]
 
 
-def _compact_number(v):
+def _compact_number(v: float) -> int | float:
     """Convert to int when the value is a whole number."""
     return int(v) if v == int(v) else v
 
 
-def _export_curve_points(dbc, curve_id):
+def _export_curve_points(dbc: DBC, curve_id: int) -> dict[str, int | float] | None:
     """Export curve points as a {x: y, ...} dict sorted by x."""
     points = dbc.curve_point.get(curve_id)
     if not points:
@@ -1078,10 +681,10 @@ if __name__ == '__main__':
         json.dump(addon_data, f, indent=2)
 
     lua_cache_path = os.path.join('.cache', build, 'addon_data.lua')
-    _write_lua(addon_data, lua_cache_path)
+    write_lua(addon_data, lua_cache_path)
 
     lua_root_path = 'Data.lua'
-    _write_lua_cbor(addon_data, lua_root_path, crlf=True)
+    write_lua_cbor(addon_data, lua_root_path, crlf=True)
 
     logging.info("Wrote addon data to %s, %s, and %s", output_path, lua_cache_path, lua_root_path)
     logging.info("Bonuses: %d bonus list IDs", len(bonuses))

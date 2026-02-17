@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import subprocess
-from typing import Optional, Self
+from typing import Self
 
 from lib.algorithm import Algorithm
 from lib.addon_data_algorithm import AddonDataAlgorithm
@@ -82,7 +82,7 @@ class LuaAlgorithm(Algorithm):
         self._proc.stdin.flush()
         return int(self._proc.stdout.readline().strip())
 
-    def bonus_string_round_trip(self, link: str) -> tuple[int, Optional[str], Optional[int]]:
+    def bonus_string_round_trip(self, link: str) -> tuple[int, str | None, int | None]:
         self._proc.stdin.write(f"BONUS_RT:{link}\n")
         self._proc.stdin.flush()
         parts = self._proc.stdout.readline().strip().split("\t")

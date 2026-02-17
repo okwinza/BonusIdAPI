@@ -1,6 +1,5 @@
 from functools import cmp_to_key
 from math import floor
-from typing import Optional
 
 from lib.algorithm import Algorithm
 from lib.dbc_file import CurveType, DBC, ItemBonus, ItemBonusType
@@ -203,7 +202,7 @@ class DirectDBCAlgorithm(Algorithm):
             player_level = self._apply_content_tuning(player_level, item.modifier_content_tuning_id)
         return player_level
 
-    def _resolve_content_tuning_id(self, content_tuning_id: int, bonus_type: Optional[ItemBonusType] = None) -> int:
+    def _resolve_content_tuning_id(self, content_tuning_id: int, bonus_type: ItemBonusType | None = None) -> int:
         for redirect in self._dbc.conditional_content_tuning.get(content_tuning_id):
             if redirect.RedirectEnum == 7:
                 return redirect.RedirectContentTuningID
@@ -211,7 +210,7 @@ class DirectDBCAlgorithm(Algorithm):
                 return redirect.RedirectContentTuningID
         return content_tuning_id
 
-    def _apply_content_tuning(self, drop_level: int, content_tuning_id: int, bonus_type: Optional[ItemBonusType] = None) -> int:
+    def _apply_content_tuning(self, drop_level: int, content_tuning_id: int, bonus_type: ItemBonusType | None = None) -> int:
         content_tuning_id = self._resolve_content_tuning_id(content_tuning_id, bonus_type)
         if not self._dbc.content_tuning.has(content_tuning_id):
             return drop_level

@@ -6,7 +6,7 @@ import logging
 import os
 import pickle
 import requests
-from typing import Any, Dict, Generic, Optional, Type, TypeVar
+from typing import Any, Dict, Generic, Type, TypeVar
 
 _DUMMY_CLASS_MEMBERS = dir(type('dummy', (ABC,), {}))
 
@@ -34,7 +34,7 @@ class DBCType(ABC):
         return f"{self.__class__.__name__}({fields_str})"
 
     @classmethod
-    def _get_annotations(cls) -> Optional[dict[str,Any]]:
+    def _get_annotations(cls) -> dict[str,Any] | None:
         return cls.__annotations
 
 class DBCTypeOneToOne(DBCType, ABC):
