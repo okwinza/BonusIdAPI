@@ -683,7 +683,7 @@ if __name__ == '__main__':
     lua_cache_path = os.path.join('.cache', build, 'addon_data.lua')
     write_lua(addon_data, lua_cache_path)
 
-    lua_root_path = 'Data.lua'
+    lua_root_path = os.path.join('..', 'LibBonusId', 'Data.lua')
     write_lua_cbor(addon_data, lua_root_path, crlf=True)
 
     logging.info("Wrote addon data to %s, %s, and %s", output_path, lua_cache_path, lua_root_path)

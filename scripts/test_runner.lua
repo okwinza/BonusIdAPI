@@ -1,3 +1,5 @@
+package.path = "../LibBonusId/?.lua;" .. package.path
+
 -- WoW Lua Environment
 _G.floor = math.floor
 _G.min = math.min
