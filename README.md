@@ -89,6 +89,13 @@ Options:
 - `requests` (for fetching DBC data)
 - `lua` (for running Lua algorithm tests)
 
+## Credits
+
+This tool was created by Sapu, but was only made possible with the help of:
+
+- Significant pre-existing work by Seriallos of [Raidbots](https://www.raidbots.com/), especially his [notes on item levels in Midnight](https://gist.github.com/seriallos/1b15ddda52ead945ab58e8140af5ca0a) plus discussions in Discord
+- Claude Code for reverse-engineering of content tuning IDs and dedup/priority logic
+
 ## Related
 
 - [LibBonusId](https://github.com/TradeSkillMaster/LibBonusId) — WoW addon library that consumes the generated addon data to compute item levels client-side
