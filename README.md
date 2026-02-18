@@ -2,7 +2,27 @@
 
 JSON API for calculating World of Warcraft item levels from bonus IDs, player level, and content tuning data. Built on top of the [Bonus ID Tool](https://github.com/TradeSkillMaster/BonusIdTool) reverse-engineering work.
 
-## Quick start
+## Live API
+
+A public instance hosted by [Seramate](https://seramate.com) is available at **https://ilvl.seramate.com** — no setup required.
+
+```bash
+# Single item
+curl 'https://ilvl.seramate.com/calc?item_id=60211'
+# {"item_id":60211,"item_level":15,"build":"12.0.1.65940","algorithm":"dbc"}
+
+# With bonus IDs and player level
+curl 'https://ilvl.seramate.com/calc?item_id=60211&bonus_ids=10990,10377&player_level=80'
+
+# Batch (POST)
+curl -X POST https://ilvl.seramate.com/calc/batch \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"item_id":60211},{"item_id":60211,"bonus_ids":[10990,10377]}]}'
+```
+
+The live API always tracks the latest WoW build. See [API.md](API.md) for full endpoint documentation.
+
+## Quick start (self-hosted)
 
 ```bash
 make build   # build the Docker image
