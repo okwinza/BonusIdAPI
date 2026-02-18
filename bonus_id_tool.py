@@ -30,7 +30,7 @@ def cmd_generate(args):
 
 def cmd_test(args):
     """Run tests comparing algorithm output against game-extracted data."""
-    from test.test import Test
+    from tests.test_calc import Test
     algorithms = ['dbc', 'addon', 'lua'] if args.algorithm == 'all' else [args.algorithm]
     test = Test(args.build)
     test.main(algorithms)

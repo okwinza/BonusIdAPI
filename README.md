@@ -32,7 +32,7 @@ Fetches DBC data for the given build, computes all bonus ID effects, and writes:
 python bonus_id_tool.py test [build]
 ```
 
-Tests the algorithm against game-extracted data in `test/data/`. Supports testing individual algorithm implementations:
+Tests the algorithm against game-extracted data in `tests/data/`. Supports testing individual algorithm implementations:
 
 ```bash
 python bonus_id_tool.py test [build] -a dbc    # Direct DBC algorithm only
@@ -61,10 +61,15 @@ Options:
 - `-c, --content-tuning-id` — Content tuning ID modifier (modifier type 28, default: 0)
 - `-a, --algorithm` — Algorithm to use: `dbc` (default) or `addon`
 
+## JSON API
+
+A FastAPI wrapper is available for HTTP access. See [API.md](API.md) for endpoints, examples, and Docker setup.
+
 ## Project Structure
 
 ```
 ├── bonus_id_tool.py              # CLI entry point
+├── api.py                        # FastAPI JSON API
 ├── lib/
 │   ├── generate_addon_data.py    # Addon data generator
 │   ├── algorithm.py              # Base algorithm interface
@@ -73,21 +78,27 @@ Options:
 │   ├── dbc_file.py               # DBC file parsing and type definitions
 │   ├── item.py                   # Item link parsing
 │   └── lua_writer.py             # Lua/CBOR output
-├── test/
-│   ├── test.py                   # Test runner
+├── tests/
+│   ├── test_api.py               # API tests (pytest)
+│   ├── test_calc.py              # Algorithm test runner
 │   ├── test_runner.lua           # Lua test harness
-│   └── data/
-│       ├── single_bonus_id.txt   # Per-bonus-ID expected item levels
-│       ├── content_tuning_id.txt # Per-content-tuning expected levels
-│       └── links.txt             # Full item links with expected levels
+│   └── data/                     # Game-extracted expected values
+├── .docker/
+│   ├── Dockerfile
+│   └── entrypoint.sh
+├── docker-compose.yml
+├── Makefile
 └── .cache/                       # Downloaded DBC data (per build)
 ```
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - `requests` (for fetching DBC data)
+- `cbor2` (for CBOR-encoded Lua output)
 - `lua` (for running Lua algorithm tests)
+
+Or just use Docker — see [API.md](API.md).
 
 ## Credits
 

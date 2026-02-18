@@ -1,0 +1,16 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile
+    ports:
+      - "18981:8000"
+    volumes:
+      - .:/app
+      - cache:/app/.cache
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BUILD=12.0.1.65893
+
+volumes:
+  cache:
