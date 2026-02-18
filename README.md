@@ -1,80 +1,37 @@
-# Bonus ID Tool
+# Bonus ID API
 
-Reverse-engineering World of Warcraft's item level calculation from DBC (Database Client) files. Produces compact addon data that can be embedded in a WoW addon to compute item levels entirely client-side.
+JSON API for calculating World of Warcraft item levels from bonus IDs, player level, and content tuning data. Built on top of the [Bonus ID Tool](https://github.com/TradeSkillMaster/BonusIdTool) reverse-engineering work.
 
-## Overview
-
-WoW item levels are determined by a complex system of bonus IDs, scaling configs, content tuning, curve interpolation, and the Midnight item-level squish. This project:
-
-1. **Parses DBC files** fetched from [wago.tools](https://wago.tools) (ItemBonus, CurvePoint, ContentTuning, ItemScalingConfig, etc.)
-2. **Implements the item level algorithm** in Python, matching the game client's behavior
-3. **Generates compact addon data** (JSON + Lua) for use in the [LibBonusId](https://github.com/TradeSkillMaster/LibBonusId) WoW addon library
-4. **Validates correctness** against game-extracted test data
-
-## Usage
-
-All commands default to the latest retail build from [wago.tools](https://wago.tools). You can also pass a specific build version (e.g. `12.0.1.65867`).
-
-### Generate addon data
+## Quick start
 
 ```bash
-python bonus_id_tool.py generate [build]
+make build   # build the Docker image
+make up      # start the API on localhost:18981
 ```
 
-Fetches DBC data for the given build, computes all bonus ID effects, and writes:
-- `.cache/<build>/addon_data.json` — full addon data as JSON
-- `.cache/<build>/addon_data.lua` — Lua table format
-- `../LibBonusId/Data.lua` — CBOR-encoded Lua for the addon (only if `../LibBonusId/` exists)
+On first start, DBC cache is generated for the build set in `docker-compose.yml`. See [API.md](API.md) for endpoints, examples, and configuration.
 
-### Run tests
-
-```bash
-python bonus_id_tool.py test [build]
-```
-
-Tests the algorithm against game-extracted data in `tests/data/`. Supports testing individual algorithm implementations:
-
-```bash
-python bonus_id_tool.py test [build] -a dbc    # Direct DBC algorithm only
-python bonus_id_tool.py test [build] -a addon  # Addon data algorithm only
-python bonus_id_tool.py test [build] -a lua    # Lua algorithm only
-```
-
-### Calculate item level
-
-From a WoW item link:
-
-```bash
-python bonus_id_tool.py calc [build] "|cnIQ4:|Hitem:60211::::::::61:259::5:1:9052:2:9:35:28:2660:::::|h[Bracers of the Dark Pool]|h|r"
-```
-
-From separated item info (item ID, bonus IDs, and modifiers):
-
-```bash
-python bonus_id_tool.py calc [build] -i 60211 -b 9052 -p 35 -c 2660
-```
-
-Options:
-- `-i, --item-id` — Item ID
-- `-b, --bonus-ids` — Comma-separated bonus IDs
-- `-p, --player-level` — Player level modifier (modifier type 9, default: 0)
-- `-c, --content-tuning-id` — Content tuning ID modifier (modifier type 28, default: 0)
-- `-a, --algorithm` — Algorithm to use: `dbc` (default) or `addon`
-
-## JSON API
-
-A FastAPI wrapper is available for HTTP access. See [API.md](API.md) for endpoints, examples, and Docker setup.
-
-## Project Structure
+## Makefile targets
 
 ```
+make build     docker compose build
+make up        docker compose up -d
+make down      docker compose down
+make shell     bash into the running container
+make test      run pytest
+make wipe      docker compose down -v (removes cache volume)
+```
+
+## Project structure
+
+```
+├── api.py                        # FastAPI application
 ├── bonus_id_tool.py              # CLI entry point
-├── api.py                        # FastAPI JSON API
 ├── lib/
-│   ├── generate_addon_data.py    # Addon data generator
 │   ├── algorithm.py              # Base algorithm interface
 │   ├── direct_dbc_algorithm.py   # Algorithm using raw DBC data
 │   ├── addon_data_algorithm.py   # Algorithm using generated addon data
+│   ├── generate_addon_data.py    # Addon data generator
 │   ├── dbc_file.py               # DBC file parsing and type definitions
 │   ├── item.py                   # Item link parsing
 │   └── lua_writer.py             # Lua/CBOR output
@@ -87,29 +44,20 @@ A FastAPI wrapper is available for HTTP access. See [API.md](API.md) for endpoin
 │   ├── Dockerfile
 │   └── entrypoint.sh
 ├── docker-compose.yml
-├── Makefile
-└── .cache/                       # Downloaded DBC data (per build)
+└── Makefile
 ```
-
-## Requirements
-
-- Python 3.11+
-- `requests` (for fetching DBC data)
-- `cbor2` (for CBOR-encoded Lua output)
-- `lua` (for running Lua algorithm tests)
-
-Or just use Docker — see [API.md](API.md).
 
 ## Credits
 
-This tool was created by Sapu, but was only made possible with the help of:
-
-- Significant pre-existing work by Seriallos of [Raidbots](https://www.raidbots.com/), especially his [notes on item levels in Midnight](https://gist.github.com/seriallos/1b15ddda52ead945ab58e8140af5ca0a) plus discussions in Discord
-- Claude Code for reverse-engineering of content tuning IDs and dedup/priority logic
+- [Sapu](https://github.com/TradeSkillMaster) — Bonus ID Tool and item level algorithm
+- [Seriallos](https://www.raidbots.com/) — pre-existing research, especially [notes on item levels in Midnight](https://gist.github.com/seriallos/1b15ddda52ead945ab58e8140af5ca0a)
+- [okwinza](https://github.com/okwinza) — JSON API wrapper
+- Claude Code — reverse-engineering of content tuning IDs and dedup/priority logic
 
 ## Related
 
-- [LibBonusId](https://github.com/TradeSkillMaster/LibBonusId) — WoW addon library that consumes the generated addon data to compute item levels client-side
+- [BonusIdTool](https://github.com/TradeSkillMaster/BonusIdTool) — upstream CLI tool
+- [LibBonusId](https://github.com/TradeSkillMaster/LibBonusId) — WoW addon library that consumes the generated data
 
 ## License
 
